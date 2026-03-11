@@ -84,6 +84,8 @@ fun MonitorScreen(
     val cloudEmail by vm.cloudEmail.collectAsState()
     val localPollMs by vm.localPollMs.collectAsState()
     val remotePollMs by vm.remotePollMs.collectAsState()
+    val isScanning by vm.isScanning.collectAsState()
+    val scannedIp by vm.scannedIp.collectAsState()
 
     var showThresholdDialog by remember { mutableStateOf(false) }
     var showConnectionSettings by remember { mutableStateOf(false) }
@@ -204,6 +206,9 @@ fun MonitorScreen(
             currentEmail = cloudEmail,
             currentLocalPollMs = localPollMs,
             currentRemotePollMs = remotePollMs,
+            isScanning = isScanning,
+            scannedIp = scannedIp,
+            onScanClick = { vm.scanForDevice() },
             onSave = { ip, email, password, localMs, remoteMs ->
                 vm.saveLocalSettings(ip, localMs)
                 if (email.isNotBlank()) vm.saveCloudSettings(email, password, remoteMs)

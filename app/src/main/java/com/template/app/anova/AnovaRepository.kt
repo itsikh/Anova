@@ -81,12 +81,24 @@ class AnovaRepository @Inject constructor(
                 }
                 ConnectionMode.LOCAL_WIFI -> {
                     currentPollIntervalMs = localMs
-                    if (ip.isBlank()) {
-                        _deviceState.update { it.copy(connectionError = "No device IP configured. Tap 'Configure connection' to enter the device IP address.") }
-                        return@launch
-                    }
+                    val resolvedIp = if (ip.isBlank()) {
+                        _deviceState.update { it.copy(connectionState = ConnectionState.SCANNING, connectionError = null) }
+                        AppLogger.i(TAG, "LOCAL_WIFI: no IP configured, scanning local network…")
+                        val found = wifiTransport.discoverDevice()
+                        if (found == null) {
+                            _deviceState.update {
+                                it.copy(
+                                    connectionState = ConnectionState.DISCONNECTED,
+                                    connectionError = "No Anova device found on this network. Make sure the cooker is powered on and connected to the same Wi-Fi network."
+                                )
+                            }
+                            return@launch
+                        }
+                        settings.setLocalWifiIp(found)
+                        found
+                    } else ip
                     _activeTransport.value = ActiveTransport.LOCAL_WIFI
-                    wifiTransport.connect(ip)
+                    wifiTransport.connect(resolvedIp)
                 }
                 ConnectionMode.CLOUD -> {
                     currentPollIntervalMs = remoteMs
@@ -112,6 +124,9 @@ class AnovaRepository @Inject constructor(
     // Auto-fallback logic
     // -----------------------------------------------------------------------------------------
 
+    /** Scans the local network for an Anova device and returns its IP, or null if not found. */
+    suspend fun discoverDevice(): String? = wifiTransport.discoverDevice()
+
     private suspend fun connectAuto(
         ip: String,
         email: String,
@@ -119,16 +134,27 @@ class AnovaRepository @Inject constructor(
         localMs: Long,
         remoteMs: Long
     ) {
-        if (ip.isBlank()) {
-            AppLogger.i(TAG, "AUTO: no local IP configured, using cloud directly")
+        val resolvedIp = if (ip.isBlank()) {
+            AppLogger.i(TAG, "AUTO: no local IP configured, scanning…")
+            _deviceState.update { it.copy(connectionState = ConnectionState.SCANNING, connectionError = null) }
+            val found = wifiTransport.discoverDevice()
+            if (found != null) {
+                AppLogger.i(TAG, "AUTO: found Anova at $found")
+                settings.setLocalWifiIp(found)
+            }
+            found
+        } else ip
+
+        if (resolvedIp.isNullOrBlank()) {
+            AppLogger.i(TAG, "AUTO: no Anova on local network, falling back to cloud")
             switchToCloud(email, password, remoteMs)
             return
         }
 
-        AppLogger.i(TAG, "AUTO: trying local WiFi ($ip) with ${AUTO_WIFI_TIMEOUT_MS}ms timeout…")
+        AppLogger.i(TAG, "AUTO: trying local WiFi ($resolvedIp) with ${AUTO_WIFI_TIMEOUT_MS}ms timeout…")
         currentPollIntervalMs = localMs
         _activeTransport.value = ActiveTransport.LOCAL_WIFI
-        wifiTransport.connect(ip)
+        wifiTransport.connect(resolvedIp)
 
         val connected = withTimeoutOrNull(AUTO_WIFI_TIMEOUT_MS) {
             wifiTransport.connectionState.first { it == ConnectionState.CONNECTED }

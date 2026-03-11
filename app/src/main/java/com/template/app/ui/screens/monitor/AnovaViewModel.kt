@@ -44,6 +44,12 @@ class AnovaViewModel @Inject constructor(
     private val _thresholds = MutableStateFlow(ThresholdSettings())
     val thresholds: StateFlow<ThresholdSettings> = _thresholds.asStateFlow()
 
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    private val _scannedIp = MutableStateFlow<String?>(null)
+    val scannedIp: StateFlow<String?> = _scannedIp.asStateFlow()
+
     private var minAlertFired = false
     private var maxAlertFired = false
 
@@ -57,6 +63,19 @@ class AnovaViewModel @Inject constructor(
 
     fun connect() = repository.connect()
     fun disconnect() = repository.disconnect()
+
+    fun scanForDevice() {
+        viewModelScope.launch {
+            _isScanning.value = true
+            _scannedIp.value = null
+            val ip = repository.discoverDevice()
+            _isScanning.value = false
+            if (ip != null) {
+                settings.setLocalWifiIp(ip)
+                _scannedIp.value = ip
+            }
+        }
+    }
 
     fun setConnectionMode(mode: ConnectionMode) {
         viewModelScope.launch { settings.setConnectionMode(mode) }
