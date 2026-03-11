@@ -59,18 +59,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
-import android.accounts.Account
-import android.accounts.AccountManager
-import android.app.Activity
-import com.google.android.gms.auth.GoogleAuthUtil
 import com.template.app.anova.ActiveTransport
-import com.template.app.logging.AppLogger
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import com.template.app.anova.AnovaStatus
 import com.template.app.anova.ConnectionMode
 import com.template.app.anova.ConnectionState
@@ -97,39 +87,8 @@ fun MonitorScreen(
     val isScanning by vm.isScanning.collectAsState()
     val scannedIp by vm.scannedIp.collectAsState()
 
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-
     var showThresholdDialog by remember { mutableStateOf(false) }
     var showConnectionSettings by remember { mutableStateOf(false) }
-    var googleSignedInAs by remember { mutableStateOf<String?>(null) }
-
-    // AccountManager-based account picker — bypasses GoogleSignIn SHA-1 validation
-    val googleAccountLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val accountName = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
-                ?: return@rememberLauncherForActivityResult
-            coroutineScope.launch {
-                try {
-                    val token = withContext(Dispatchers.IO) {
-                        GoogleAuthUtil.getToken(
-                            context,
-                            Account(accountName, "com.google"),
-                            "oauth2:https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
-                        )
-                    }
-                    vm.setGoogleToken(token)
-                    googleSignedInAs = accountName
-                    AppLogger.i("MonitorScreen", "Google account linked: $accountName")
-                } catch (e: Exception) {
-                    AppLogger.e("MonitorScreen", "Failed to get Google token for $accountName: ${e.message}")
-                }
-            }
-        }
-    }
-
 
     val blePermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
@@ -250,12 +209,6 @@ fun MonitorScreen(
             isScanning = isScanning,
             scannedIp = scannedIp,
             onScanClick = { vm.scanForDevice() },
-            onGoogleSignInClick = {
-                googleAccountLauncher.launch(
-                    AccountManager.newChooseAccountIntent(null, null, arrayOf("com.google"), null, null, null, null)
-                )
-            },
-            googleSignedInAs = googleSignedInAs,
             onSave = { ip, email, password, localMs, remoteMs ->
                 vm.saveLocalSettings(ip, localMs)
                 if (email.isNotBlank()) vm.saveCloudSettings(email, password, remoteMs)
