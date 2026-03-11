@@ -7,7 +7,8 @@ data class AnovaDeviceState(
     val timerMinutes: Int? = null,
     val status: AnovaStatus = AnovaStatus.UNKNOWN,
     val deviceName: String? = null,
-    val lastUpdated: Long = 0L
+    val lastUpdated: Long = 0L,
+    val connectionError: String? = null
 )
 
 enum class ConnectionState {

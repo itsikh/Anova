@@ -50,6 +50,9 @@ class AnovaCloudTransport @Inject constructor(
     private val _deviceName = MutableStateFlow<String?>(null)
     override val deviceName: StateFlow<String?> = _deviceName.asStateFlow()
 
+    private val _lastError = MutableStateFlow<String?>(null)
+    val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
     private var email: String? = null
     private var password: String? = null
     private var cookerId: String? = null
@@ -72,24 +75,27 @@ class AnovaCloudTransport @Inject constructor(
     /** [address] is ignored — cloud transport uses stored credentials. */
     override fun connect(address: String?) {
         val e = email?.takeIf { it.isNotBlank() } ?: run {
+            _lastError.value = "No email configured. Enter your Anova account email in Connection Settings."
             AppLogger.e(TAG, "No email configured"); return
         }
         val p = password?.takeIf { it.isNotBlank() } ?: run {
+            _lastError.value = "No password configured. Enter your Anova account password in Connection Settings."
             AppLogger.e(TAG, "No password configured"); return
         }
         if (_connectionState.value == ConnectionState.CONNECTING) return
 
+        _lastError.value = null
         _connectionState.value = ConnectionState.CONNECTING
         scope.launch {
             val token = auth.getValidToken(e, p)
             if (token == null) {
                 AppLogger.e(TAG, "Authentication failed — check credentials")
+                _lastError.value = auth.lastSignInError ?: "Authentication failed. Check your credentials."
                 _connectionState.value = ConnectionState.DISCONNECTED
                 return@launch
             }
             val id = fetchCookerId(token)
             if (id == null) {
-                AppLogger.e(TAG, "No Anova device found on this account")
                 _connectionState.value = ConnectionState.DISCONNECTED
                 return@launch
             }
@@ -168,14 +174,28 @@ class AnovaCloudTransport @Inject constructor(
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
                 AppLogger.e(TAG, "Device list fetch failed: ${response.code}")
+                _lastError.value = "Cannot reach Anova servers (HTTP ${response.code})."
                 return@withContext null
             }
-            val json = response.body?.string() ?: return@withContext null
+            val json = response.body?.string() ?: run {
+                _lastError.value = "Empty response from Anova servers."
+                return@withContext null
+            }
             AppLogger.d(TAG, "Devices: $json")
-            gson.fromJson(json, AnovaDevicesResponse::class.java)
+            val cookerId = gson.fromJson(json, AnovaDevicesResponse::class.java)
                 ?.devices?.firstOrNull()?.cookerId
+            if (cookerId == null) {
+                AppLogger.e(TAG, "No Anova device found on this account")
+                _lastError.value = "No Anova device found on this account."
+            }
+            cookerId
+        } catch (e: java.io.IOException) {
+            AppLogger.e(TAG, "Device list error: ${e.message}")
+            _lastError.value = "Cannot reach Anova servers. Check your internet connection."
+            null
         } catch (e: Exception) {
             AppLogger.e(TAG, "Device list error: ${e.message}")
+            _lastError.value = "Unexpected error fetching device list."
             null
         }
     }

@@ -34,10 +34,13 @@ class AnovaFirebaseAuth @Inject constructor() {
     private val gson = Gson()
 
     @Volatile private var cached: CachedToken? = null
+    /** Human-readable error from the last failed sign-in attempt, or null if no error. */
+    @Volatile var lastSignInError: String? = null
+        private set
 
     /**
      * Returns a valid Firebase ID token, refreshing/re-authenticating as needed.
-     * Returns null on authentication failure.
+     * Returns null on authentication failure; check [lastSignInError] for the reason.
      */
     suspend fun getValidToken(email: String, password: String): String? {
         val existing = cached
@@ -63,6 +66,7 @@ class AnovaFirebaseAuth @Inject constructor() {
     // -----------------------------------------------------------------------------------------
 
     private suspend fun signIn(email: String, password: String): CachedToken? = withContext(Dispatchers.IO) {
+        lastSignInError = null
         try {
             val body = """{"email":"${email.trim()}","password":"$password","returnSecureToken":true}"""
             val request = Request.Builder()
@@ -71,15 +75,32 @@ class AnovaFirebaseAuth @Inject constructor() {
                 .build()
             val resp = client.newCall(request).execute()
             if (!resp.isSuccessful) {
-                AppLogger.e(TAG, "Sign-in failed ${resp.code}: ${resp.body?.string()?.take(200)}")
+                val errorBody = resp.body?.string() ?: ""
+                AppLogger.e(TAG, "Sign-in failed ${resp.code}: ${errorBody.take(200)}")
+                lastSignInError = when {
+                    "INVALID_PASSWORD" in errorBody || "INVALID_LOGIN_CREDENTIALS" in errorBody ->
+                        "Incorrect password. Check your Anova account credentials."
+                    "EMAIL_NOT_FOUND" in errorBody || "INVALID_EMAIL" in errorBody ->
+                        "Email not found. Check your Anova account email."
+                    "TOO_MANY_ATTEMPTS_TRY_LATER" in errorBody ->
+                        "Too many failed attempts. Please try again later."
+                    "USER_DISABLED" in errorBody ->
+                        "This account has been disabled."
+                    else -> "Authentication failed (code ${resp.code})."
+                }
                 return@withContext null
             }
             val parsed = gson.fromJson(resp.body?.string(), FirebaseSignInResponse::class.java)
             val expiresAt = System.currentTimeMillis() + (parsed.expiresIn.toLongOrNull() ?: 3600L) * 1000
             AppLogger.i(TAG, "Signed in successfully")
             CachedToken(parsed.idToken, parsed.refreshToken, expiresAt)
+        } catch (e: java.io.IOException) {
+            AppLogger.e(TAG, "Sign-in error: ${e.message}")
+            lastSignInError = "Cannot reach Anova servers. Check your internet connection."
+            null
         } catch (e: Exception) {
             AppLogger.e(TAG, "Sign-in error: ${e.message}")
+            lastSignInError = "Unexpected error during sign-in."
             null
         }
     }

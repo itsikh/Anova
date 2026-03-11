@@ -56,6 +56,7 @@ class AnovaRepository @Inject constructor(
         observeTransport(bleTransport, ActiveTransport.BLUETOOTH)
         observeTransport(wifiTransport, ActiveTransport.LOCAL_WIFI)
         observeTransport(cloudTransport, ActiveTransport.CLOUD)
+        observeCloudErrors()
     }
 
     // -----------------------------------------------------------------------------------------
@@ -64,6 +65,7 @@ class AnovaRepository @Inject constructor(
 
     fun connect() {
         scope.launch {
+            _deviceState.update { it.copy(connectionError = null) }
             val mode = settings.connectionMode.first()
             val ip = settings.localWifiIp.first()
             val email = settings.cloudEmail.first()
@@ -79,8 +81,12 @@ class AnovaRepository @Inject constructor(
                 }
                 ConnectionMode.LOCAL_WIFI -> {
                     currentPollIntervalMs = localMs
+                    if (ip.isBlank()) {
+                        _deviceState.update { it.copy(connectionError = "No device IP configured. Tap 'Configure connection' to enter the device IP address.") }
+                        return@launch
+                    }
                     _activeTransport.value = ActiveTransport.LOCAL_WIFI
-                    wifiTransport.connect(ip.ifBlank { null })
+                    wifiTransport.connect(ip)
                 }
                 ConnectionMode.CLOUD -> {
                     currentPollIntervalMs = remoteMs
@@ -140,7 +146,12 @@ class AnovaRepository @Inject constructor(
     private fun switchToCloud(email: String, password: String, remoteMs: Long) {
         if (email.isBlank() || password.isBlank()) {
             AppLogger.e(TAG, "Cloud fallback failed: no cloud credentials configured")
-            _deviceState.update { it.copy(connectionState = ConnectionState.DISCONNECTED) }
+            _deviceState.update {
+                it.copy(
+                    connectionState = ConnectionState.DISCONNECTED,
+                    connectionError = "No cloud credentials configured. Tap 'Configure connection' to enter your Anova account details."
+                )
+            }
             return
         }
         currentPollIntervalMs = remoteMs
@@ -159,7 +170,11 @@ class AnovaRepository @Inject constructor(
                 if (_activeTransport.value != type) return@collect
                 _deviceState.update { it.copy(connectionState = state) }
                 when (state) {
-                    ConnectionState.CONNECTED -> { purgeOldHistory(); startPolling() }
+                    ConnectionState.CONNECTED -> {
+                        _deviceState.update { it.copy(connectionError = null) }
+                        purgeOldHistory()
+                        startPolling()
+                    }
                     ConnectionState.DISCONNECTED -> {
                         stopPolling()
                         _deviceState.update {
@@ -173,6 +188,16 @@ class AnovaRepository @Inject constructor(
         scope.launch {
             transport.deviceName.collect { name ->
                 if (_activeTransport.value == type) _deviceState.update { it.copy(deviceName = name) }
+            }
+        }
+    }
+
+    private fun observeCloudErrors() {
+        scope.launch {
+            cloudTransport.lastError.collect { error ->
+                if (_activeTransport.value == ActiveTransport.CLOUD && error != null) {
+                    _deviceState.update { it.copy(connectionError = error) }
+                }
             }
         }
     }

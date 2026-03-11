@@ -172,6 +172,7 @@ fun MonitorScreen(
             // Connect / Disconnect
             ConnectionControls(
                 connectionState = state.connectionState,
+                connectionError = state.connectionError,
                 deviceName = state.deviceName,
                 onConnect = ::onConnectClicked,
                 onDisconnect = { vm.disconnect() }
@@ -369,6 +370,7 @@ private fun ThresholdIndicator(temp: Float?, thresholds: ThresholdSettings, unit
 @Composable
 private fun ConnectionControls(
     connectionState: ConnectionState,
+    connectionError: String?,
     deviceName: String?,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit
@@ -386,6 +388,15 @@ private fun ConnectionControls(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
             ) { Text("Disconnect") }
+        }
+        if (connectionState == ConnectionState.DISCONNECTED && connectionError != null) {
+            Text(
+                connectionError,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
