@@ -50,6 +50,8 @@ fun ConnectionSettingsDialog(
     isScanning: Boolean = false,
     scannedIp: String? = null,
     onScanClick: (() -> Unit)? = null,
+    onGoogleSignInClick: (() -> Unit)? = null,
+    googleSignedInAs: String? = null,
     onSave: (ip: String, email: String, password: String, localMs: Long, remoteMs: Long) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -144,6 +146,36 @@ fun ConnectionSettingsDialog(
                                 "It may stop working if Anova changes their servers.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
+
+                    // Google Sign-In option
+                    if (onGoogleSignInClick != null) {
+                        if (googleSignedInAs != null) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    "Signed in with Google as $googleSignedInAs",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = androidx.compose.ui.Modifier.padding(10.dp)
+                                )
+                            }
+                        } else {
+                            androidx.compose.material3.OutlinedButton(
+                                onClick = onGoogleSignInClick,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Sign in with Google")
+                            }
+                            Text(
+                                "— or use email/password below —",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = androidx.compose.ui.Modifier.align(Alignment.CenterHorizontally)
                             )
                         }
                     }

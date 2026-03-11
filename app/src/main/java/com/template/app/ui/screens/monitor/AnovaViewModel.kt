@@ -64,6 +64,11 @@ class AnovaViewModel @Inject constructor(
     fun connect() = repository.connect()
     fun disconnect() = repository.disconnect()
 
+    /** Store a Google OAuth access token so the next [connect] uses Google SSO. */
+    fun setGoogleToken(googleAccessToken: String) {
+        repository.setGoogleToken(googleAccessToken)
+    }
+
     fun scanForDevice() {
         viewModelScope.launch {
             _isScanning.value = true

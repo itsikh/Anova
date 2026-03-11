@@ -85,46 +85,74 @@ class AnovaCloudTransport @Inject constructor(
     // AnovaTransport
     // -----------------------------------------------------------------------------------------
 
-    /** [address] is ignored — cloud transport uses stored credentials. */
+    /** [address] is ignored — cloud transport uses stored credentials or Google SSO token. */
     override fun connect(address: String?) {
-        val e = email?.takeIf { it.isNotBlank() } ?: run {
-            _lastError.value = "No email configured. Enter your Anova account email in Connection Settings."
-            AppLogger.e(TAG, "No email configured"); return
-        }
-        val p = password?.takeIf { it.isNotBlank() } ?: run {
-            _lastError.value = "No password configured. Enter your Anova account password in Connection Settings."
-            AppLogger.e(TAG, "No password configured"); return
-        }
-        if (_connectionState.value == ConnectionState.CONNECTING) return
-
-        _lastError.value = null
-        _connectionState.value = ConnectionState.CONNECTING
-        scope.launch {
-            try {
-                AppLogger.i(TAG, "Authenticating with Firebase…")
-                val token = auth.getValidToken(e, p)
-                if (token == null) {
-                    AppLogger.e(TAG, "Authentication failed — check credentials")
-                    _lastError.value = auth.lastSignInError ?: "Authentication failed. Check your credentials."
+        val googleToken = pendingGoogleAccessToken
+        // Require either Google SSO token or email+password
+        if (googleToken == null) {
+            val e = email?.takeIf { it.isNotBlank() } ?: run {
+                _lastError.value = "No email configured. Enter your Anova account email in Connection Settings."
+                AppLogger.e(TAG, "No email configured"); return
+            }
+            val p = password?.takeIf { it.isNotBlank() } ?: run {
+                _lastError.value = "No password configured. Enter your Anova account password in Connection Settings."
+                AppLogger.e(TAG, "No password configured"); return
+            }
+            if (_connectionState.value == ConnectionState.CONNECTING) return
+            _lastError.value = null
+            _connectionState.value = ConnectionState.CONNECTING
+            scope.launch {
+                try {
+                    AppLogger.i(TAG, "Authenticating with Firebase (email/password)…")
+                    val token = auth.getValidToken(e, p)
+                    if (token == null) {
+                        AppLogger.e(TAG, "Authentication failed — check credentials")
+                        _lastError.value = auth.lastSignInError ?: "Authentication failed. Check your credentials."
+                        _connectionState.value = ConnectionState.DISCONNECTED
+                        return@launch
+                    }
+                    finishConnect(token)
+                } catch (ex: Exception) {
+                    AppLogger.e(TAG, "connect() threw unexpectedly: ${ex.message}")
+                    _lastError.value = "Unexpected error: ${ex.message}"
                     _connectionState.value = ConnectionState.DISCONNECTED
-                    return@launch
                 }
-                AppLogger.i(TAG, "Authenticated, fetching cooker ID…")
-                val id = fetchCookerId(token)
-                if (id == null) {
+            }
+        } else {
+            if (_connectionState.value == ConnectionState.CONNECTING) return
+            _lastError.value = null
+            _connectionState.value = ConnectionState.CONNECTING
+            scope.launch {
+                try {
+                    AppLogger.i(TAG, "Authenticating with Firebase (Google SSO)…")
+                    val token = auth.signInWithGoogleAccessToken(googleToken)
+                    if (token == null) {
+                        _lastError.value = auth.lastSignInError ?: "Google sign-in failed."
+                        _connectionState.value = ConnectionState.DISCONNECTED
+                        return@launch
+                    }
+                    pendingGoogleAccessToken = null // token is now cached in auth, no longer needed
+                    finishConnect(token)
+                } catch (ex: Exception) {
+                    AppLogger.e(TAG, "Google connect() threw: ${ex.message}")
+                    _lastError.value = "Unexpected error: ${ex.message}"
                     _connectionState.value = ConnectionState.DISCONNECTED
-                    return@launch
                 }
-                cookerId = id
-                _deviceName.value = "Anova Cloud"
-                _connectionState.value = ConnectionState.CONNECTED
-                AppLogger.i(TAG, "Cloud connected — device: $id")
-            } catch (ex: Exception) {
-                AppLogger.e(TAG, "connect() threw unexpectedly: ${ex.message}")
-                _lastError.value = "Unexpected error: ${ex.message}"
-                _connectionState.value = ConnectionState.DISCONNECTED
             }
         }
+    }
+
+    private suspend fun finishConnect(token: String) {
+        AppLogger.i(TAG, "Authenticated, fetching cooker ID…")
+        val id = fetchCookerId(token)
+        if (id == null) {
+            _connectionState.value = ConnectionState.DISCONNECTED
+            return
+        }
+        cookerId = id
+        _deviceName.value = "Anova Cloud"
+        _connectionState.value = ConnectionState.CONNECTED
+        AppLogger.i(TAG, "Cloud connected — device: $id")
     }
 
     override fun disconnect() {
