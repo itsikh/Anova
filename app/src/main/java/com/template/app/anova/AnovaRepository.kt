@@ -192,28 +192,37 @@ class AnovaRepository @Inject constructor(
 
     private fun observeTransport(transport: AnovaTransport, type: ActiveTransport) {
         scope.launch {
-            transport.connectionState.collect { state ->
-                if (_activeTransport.value != type) return@collect
-                _deviceState.update { it.copy(connectionState = state) }
-                when (state) {
-                    ConnectionState.CONNECTED -> {
-                        _deviceState.update { it.copy(connectionError = null) }
-                        purgeOldHistory()
-                        startPolling()
-                    }
-                    ConnectionState.DISCONNECTED -> {
-                        stopPolling()
-                        _deviceState.update {
-                            it.copy(currentTemp = null, timerMinutes = null, status = AnovaStatus.UNKNOWN)
+            try {
+                transport.connectionState.collect { state ->
+                    if (_activeTransport.value != type) return@collect
+                    AppLogger.d(TAG, "$type state → $state")
+                    _deviceState.update { it.copy(connectionState = state) }
+                    when (state) {
+                        ConnectionState.CONNECTED -> {
+                            _deviceState.update { it.copy(connectionError = null) }
+                            purgeOldHistory()
+                            startPolling()
                         }
+                        ConnectionState.DISCONNECTED -> {
+                            stopPolling()
+                            _deviceState.update {
+                                it.copy(currentTemp = null, timerMinutes = null, status = AnovaStatus.UNKNOWN)
+                            }
+                        }
+                        else -> Unit
                     }
-                    else -> Unit
                 }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "observeTransport($type) collector crashed: ${e.message}")
             }
         }
         scope.launch {
-            transport.deviceName.collect { name ->
-                if (_activeTransport.value == type) _deviceState.update { it.copy(deviceName = name) }
+            try {
+                transport.deviceName.collect { name ->
+                    if (_activeTransport.value == type) _deviceState.update { it.copy(deviceName = name) }
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "observeTransport($type) deviceName collector crashed: ${e.message}")
             }
         }
     }
@@ -279,6 +288,10 @@ class AnovaRepository @Inject constructor(
     }
 
     private suspend fun purgeOldHistory() {
-        readingDao.deleteOlderThan(System.currentTimeMillis() - HISTORY_MAX_AGE_MS)
+        try {
+            readingDao.deleteOlderThan(System.currentTimeMillis() - HISTORY_MAX_AGE_MS)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to purge old history: ${e.message}")
+        }
     }
 }

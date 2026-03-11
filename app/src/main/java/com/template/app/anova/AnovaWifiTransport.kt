@@ -90,11 +90,20 @@ class AnovaWifiTransport @Inject constructor(
     override suspend fun poll(): AnovaRawState? {
         if (_connectionState.value != ConnectionState.CONNECTED) return null
         return try {
-            val temp = sendCommand(AnovaProtocol.CMD_READ_TEMP)?.trim()?.toFloatOrNull()
+            val tempRaw = sendCommand(AnovaProtocol.CMD_READ_TEMP)
+            if (tempRaw == null) AppLogger.w(TAG, "No response to ${AnovaProtocol.CMD_READ_TEMP} (timeout)")
+            val temp = tempRaw?.trim()?.toFloatOrNull()
+
             val unitStr = sendCommand(AnovaProtocol.CMD_READ_UNIT)
+            if (unitStr == null) AppLogger.w(TAG, "No response to ${AnovaProtocol.CMD_READ_UNIT} (timeout)")
             val unit = if (unitStr?.trim().equals("f", ignoreCase = true)) TempUnit.FAHRENHEIT else TempUnit.CELSIUS
-            val timer = sendCommand(AnovaProtocol.CMD_READ_TIMER)?.trim()?.toIntOrNull()
+
+            val timerRaw = sendCommand(AnovaProtocol.CMD_READ_TIMER)
+            if (timerRaw == null) AppLogger.w(TAG, "No response to ${AnovaProtocol.CMD_READ_TIMER} (timeout)")
+            val timer = timerRaw?.trim()?.toIntOrNull()
+
             val statusStr = sendCommand(AnovaProtocol.CMD_STATUS)
+            if (statusStr == null) AppLogger.w(TAG, "No response to ${AnovaProtocol.CMD_STATUS} (timeout)")
             val status = when {
                 statusStr?.contains("running", ignoreCase = true) == true -> AnovaStatus.RUNNING
                 statusStr?.contains("stopped", ignoreCase = true) == true -> AnovaStatus.STOPPED

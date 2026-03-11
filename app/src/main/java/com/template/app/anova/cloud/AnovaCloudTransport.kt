@@ -87,22 +87,30 @@ class AnovaCloudTransport @Inject constructor(
         _lastError.value = null
         _connectionState.value = ConnectionState.CONNECTING
         scope.launch {
-            val token = auth.getValidToken(e, p)
-            if (token == null) {
-                AppLogger.e(TAG, "Authentication failed — check credentials")
-                _lastError.value = auth.lastSignInError ?: "Authentication failed. Check your credentials."
+            try {
+                AppLogger.i(TAG, "Authenticating with Firebase…")
+                val token = auth.getValidToken(e, p)
+                if (token == null) {
+                    AppLogger.e(TAG, "Authentication failed — check credentials")
+                    _lastError.value = auth.lastSignInError ?: "Authentication failed. Check your credentials."
+                    _connectionState.value = ConnectionState.DISCONNECTED
+                    return@launch
+                }
+                AppLogger.i(TAG, "Authenticated, fetching cooker ID…")
+                val id = fetchCookerId(token)
+                if (id == null) {
+                    _connectionState.value = ConnectionState.DISCONNECTED
+                    return@launch
+                }
+                cookerId = id
+                _deviceName.value = "Anova Cloud"
+                _connectionState.value = ConnectionState.CONNECTED
+                AppLogger.i(TAG, "Cloud connected — device: $id")
+            } catch (ex: Exception) {
+                AppLogger.e(TAG, "connect() threw unexpectedly: ${ex.message}")
+                _lastError.value = "Unexpected error: ${ex.message}"
                 _connectionState.value = ConnectionState.DISCONNECTED
-                return@launch
             }
-            val id = fetchCookerId(token)
-            if (id == null) {
-                _connectionState.value = ConnectionState.DISCONNECTED
-                return@launch
-            }
-            cookerId = id
-            _deviceName.value = "Anova Cloud"
-            _connectionState.value = ConnectionState.CONNECTED
-            AppLogger.i(TAG, "Cloud connected — device: $id")
         }
     }
 

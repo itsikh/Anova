@@ -69,37 +69,51 @@ class AnovaBluetoothManager @Inject constructor(
 
     override fun disconnect() {
         stopScan()
-        gatt?.disconnect()
-        gatt?.close()
+        try {
+            gatt?.disconnect()
+            gatt?.close()
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Exception during GATT disconnect/close: ${e.message}")
+        }
         gatt = null
         anovaCharacteristic = null
         _connectionState.value = ConnectionState.DISCONNECTED
         _deviceName.value = null
+        AppLogger.i(TAG, "Disconnected")
     }
 
     override suspend fun poll(): AnovaRawState? {
         if (_connectionState.value != ConnectionState.CONNECTED) return null
+        return try {
+            val tempStr = sendCommand(AnovaProtocol.CMD_READ_TEMP)
+            if (tempStr == null) AppLogger.w(TAG, "No response to ${AnovaProtocol.CMD_READ_TEMP} (timeout)")
+            val temp = tempStr?.trim()?.toFloatOrNull()
+            delay(COMMAND_DELAY_MS)
 
-        val tempStr = sendCommand(AnovaProtocol.CMD_READ_TEMP)
-        val temp = tempStr?.trim()?.toFloatOrNull()
-        delay(COMMAND_DELAY_MS)
+            val unitStr = sendCommand(AnovaProtocol.CMD_READ_UNIT)
+            if (unitStr == null) AppLogger.w(TAG, "No response to ${AnovaProtocol.CMD_READ_UNIT} (timeout)")
+            val unit = if (unitStr?.trim().equals("f", ignoreCase = true)) TempUnit.FAHRENHEIT else TempUnit.CELSIUS
+            delay(COMMAND_DELAY_MS)
 
-        val unitStr = sendCommand(AnovaProtocol.CMD_READ_UNIT)
-        val unit = if (unitStr?.trim().equals("f", ignoreCase = true)) TempUnit.FAHRENHEIT else TempUnit.CELSIUS
-        delay(COMMAND_DELAY_MS)
+            val timerStr = sendCommand(AnovaProtocol.CMD_READ_TIMER)
+            if (timerStr == null) AppLogger.w(TAG, "No response to ${AnovaProtocol.CMD_READ_TIMER} (timeout)")
+            val timer = timerStr?.trim()?.toIntOrNull()
+            delay(COMMAND_DELAY_MS)
 
-        val timerStr = sendCommand(AnovaProtocol.CMD_READ_TIMER)
-        val timer = timerStr?.trim()?.toIntOrNull()
-        delay(COMMAND_DELAY_MS)
+            val statusStr = sendCommand(AnovaProtocol.CMD_STATUS)
+            if (statusStr == null) AppLogger.w(TAG, "No response to ${AnovaProtocol.CMD_STATUS} (timeout)")
+            val status = when {
+                statusStr?.contains("running", ignoreCase = true) == true -> AnovaStatus.RUNNING
+                statusStr?.contains("stopped", ignoreCase = true) == true -> AnovaStatus.STOPPED
+                else -> AnovaStatus.UNKNOWN
+            }
 
-        val statusStr = sendCommand(AnovaProtocol.CMD_STATUS)
-        val status = when {
-            statusStr?.contains("running", ignoreCase = true) == true -> AnovaStatus.RUNNING
-            statusStr?.contains("stopped", ignoreCase = true) == true -> AnovaStatus.STOPPED
-            else -> AnovaStatus.UNKNOWN
+            AnovaRawState(currentTemp = temp, unit = unit, timerMinutes = timer, status = status)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Poll failed: ${e.message} — disconnecting")
+            handleDisconnect()
+            null
         }
-
-        return AnovaRawState(currentTemp = temp, unit = unit, timerMinutes = timer, status = status)
     }
 
     // -----------------------------------------------------------------------------------------
@@ -109,16 +123,23 @@ class AnovaBluetoothManager @Inject constructor(
     private val gattCallback = object : BluetoothGattCallback() {
 
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            AppLogger.d(TAG, "onConnectionStateChange: state=$newState status=$status device=${gatt.device.name ?: gatt.device.address}")
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                AppLogger.e(TAG, "GATT error on state change: status=$status (0x${status.toString(16)}) newState=$newState — disconnecting")
+                handleDisconnect()
+                return
+            }
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    AppLogger.i(TAG, "Connected to ${gatt.device.name}, discovering services…")
+                    AppLogger.i(TAG, "Connected to ${gatt.device.name ?: gatt.device.address}, discovering services…")
                     _connectionState.value = ConnectionState.CONNECTED
                     gatt.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    AppLogger.i(TAG, "Disconnected (status=$status)")
+                    AppLogger.i(TAG, "Disconnected from ${gatt.device.name ?: gatt.device.address}")
                     handleDisconnect()
                 }
+                else -> AppLogger.d(TAG, "Unhandled GATT state: $newState")
             }
         }
 
@@ -147,7 +168,9 @@ class AnovaBluetoothManager @Inject constructor(
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
-            responseChannel.trySend(String(value).trim())
+            val response = String(value).trim()
+            AppLogger.d(TAG, "← $response")
+            responseChannel.trySend(response)
         }
 
         @Suppress("DEPRECATION")
@@ -183,17 +206,28 @@ class AnovaBluetoothManager @Inject constructor(
     // -----------------------------------------------------------------------------------------
 
     private suspend fun sendCommand(command: String): String? {
-        val char = anovaCharacteristic ?: return null
-        val currentGatt = gatt ?: return null
+        val char = anovaCharacteristic ?: run {
+            AppLogger.w(TAG, "sendCommand($command) — no characteristic, dropping")
+            return null
+        }
+        val currentGatt = gatt ?: run {
+            AppLogger.w(TAG, "sendCommand($command) — no GATT, dropping")
+            return null
+        }
         while (responseChannel.tryReceive().isSuccess) {} // drain stale responses
         val data = (command + AnovaProtocol.CMD_TERMINATOR).toByteArray()
         AppLogger.d(TAG, "→ $command")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            currentGatt.writeCharacteristic(char, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-        } else {
-            @Suppress("DEPRECATION") char.value = data
-            @Suppress("DEPRECATION") char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-            @Suppress("DEPRECATION") currentGatt.writeCharacteristic(char)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                currentGatt.writeCharacteristic(char, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+            } else {
+                @Suppress("DEPRECATION") char.value = data
+                @Suppress("DEPRECATION") char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                @Suppress("DEPRECATION") currentGatt.writeCharacteristic(char)
+            }
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "writeCharacteristic($command) threw: ${e.message}")
+            return null
         }
         return withTimeoutOrNull(RESPONSE_TIMEOUT_MS) { responseChannel.receive() }
     }
@@ -204,12 +238,20 @@ class AnovaBluetoothManager @Inject constructor(
 
     private fun enableNotifications(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
         gatt.setCharacteristicNotification(characteristic, true)
-        val descriptor = characteristic.getDescriptor(AnovaProtocol.CCCD_UUID) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-        } else {
-            @Suppress("DEPRECATION") descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            @Suppress("DEPRECATION") gatt.writeDescriptor(descriptor)
+        val descriptor = characteristic.getDescriptor(AnovaProtocol.CCCD_UUID) ?: run {
+            AppLogger.e(TAG, "CCCD descriptor (0x2902) not found on FFE1 — notifications won't work")
+            return
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            } else {
+                @Suppress("DEPRECATION") descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                @Suppress("DEPRECATION") gatt.writeDescriptor(descriptor)
+            }
+            AppLogger.d(TAG, "CCCD notification descriptor written")
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to write CCCD descriptor: ${e.message}")
         }
     }
 
