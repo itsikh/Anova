@@ -97,8 +97,19 @@ fun MonitorScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { granted -> if (granted.values.all { it }) vm.connect() }
 
+    // Request POST_NOTIFICATIONS on Android 13+ (non-blocking — fire and forget)
+    val notificationPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* granted or denied — alerts are optional */ }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     fun onConnectClicked() {
-        if (mode == ConnectionMode.BLUETOOTH || mode == ConnectionMode.AUTO) {
+        // AUTO mode tries WiFi → Cloud; it never uses BLE, so no BLE permissions needed
+        if (mode == ConnectionMode.BLUETOOTH) {
             permissionLauncher.launch(blePermissions)
         } else {
             vm.connect()
