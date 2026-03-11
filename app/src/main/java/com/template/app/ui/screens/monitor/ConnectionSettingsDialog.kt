@@ -55,8 +55,8 @@ fun ConnectionSettingsDialog(
     onSave: (ip: String, email: String, password: String, localMs: Long, remoteMs: Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val needsWifi  = mode == ConnectionMode.LOCAL_WIFI || mode == ConnectionMode.AUTO
-    val needsCloud = mode == ConnectionMode.CLOUD      || mode == ConnectionMode.AUTO
+    val needsWifi  = mode == ConnectionMode.LOCAL_WIFI  // LOCAL_WIFI hidden from UI; section kept for completeness
+    val needsCloud = mode == ConnectionMode.CLOUD || mode == ConnectionMode.AUTO
 
     var ip by remember { mutableStateOf(currentIp) }
     var email by remember { mutableStateOf(currentEmail) }

@@ -104,33 +104,29 @@ fun MonitorScreen(
     var showConnectionSettings by remember { mutableStateOf(false) }
     var googleSignedInAs by remember { mutableStateOf<String?>(null) }
 
-    val googleSignInClient = remember {
-        GoogleSignIn.getClient(context, GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).requestEmail().build())
-    }
-    val googleSignInLauncher = rememberLauncherForActivityResult(
+    // AccountManager-based account picker — bypasses GoogleSignIn SHA-1 validation
+    val googleAccountLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        try {
-            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data).result
-            val email = account.email ?: return@rememberLauncherForActivityResult
+        if (result.resultCode == Activity.RESULT_OK) {
+            val accountName = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+                ?: return@rememberLauncherForActivityResult
             coroutineScope.launch {
                 try {
                     val token = withContext(Dispatchers.IO) {
                         GoogleAuthUtil.getToken(
                             context,
-                            account.account!!,
+                            Account(accountName, "com.google"),
                             "oauth2:https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
                         )
                     }
                     vm.setGoogleToken(token)
-                    googleSignedInAs = email
-                    AppLogger.i("MonitorScreen", "Google Sign-In OK: $email")
+                    googleSignedInAs = accountName
+                    AppLogger.i("MonitorScreen", "Google account linked: $accountName")
                 } catch (e: Exception) {
-                    AppLogger.e("MonitorScreen", "Failed to get Google access token: ${e.message}")
+                    AppLogger.e("MonitorScreen", "Failed to get Google token for $accountName: ${e.message}")
                 }
             }
-        } catch (e: Exception) {
-            AppLogger.e("MonitorScreen", "Google Sign-In result error: ${e.message}")
         }
     }
 
@@ -255,9 +251,9 @@ fun MonitorScreen(
             scannedIp = scannedIp,
             onScanClick = { vm.scanForDevice() },
             onGoogleSignInClick = {
-                googleSignInClient.signOut().addOnCompleteListener {
-                    googleSignInLauncher.launch(googleSignInClient.signInIntent)
-                }
+                googleAccountLauncher.launch(
+                    AccountManager.newChooseAccountIntent(null, null, arrayOf("com.google"), null, null, null, null)
+                )
             },
             googleSignedInAs = googleSignedInAs,
             onSave = { ip, email, password, localMs, remoteMs ->
@@ -284,7 +280,7 @@ private fun ConnectionModeSelector(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ConnectionMode.entries.forEach { mode ->
+            ConnectionMode.entries.filter { it != ConnectionMode.LOCAL_WIFI }.forEach { mode ->
                 FilterChip(
                     selected = mode == selected,
                     onClick = { onSelect(mode) },
