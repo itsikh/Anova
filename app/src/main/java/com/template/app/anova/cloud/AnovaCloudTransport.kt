@@ -72,13 +72,13 @@ class AnovaCloudTransport @Inject constructor(
 
     /**
      * Use Google SSO instead of email/password. Call before [connect].
-     * The Google access token is exchanged for a Firebase token on first connect;
+     * The Google ID token (from CredentialManager) is exchanged for a Firebase token on first connect;
      * subsequent reconnects use the cached Firebase refresh token automatically.
      */
-    fun setGoogleAccessToken(googleAccessToken: String) {
-        pendingGoogleAccessToken = googleAccessToken
+    fun setGoogleIdToken(googleIdToken: String) {
+        pendingGoogleAccessToken = googleIdToken
         auth.clearToken()
-        AppLogger.i(TAG, "Google access token set — will use SSO on next connect")
+        AppLogger.i(TAG, "Google ID token set — will use SSO on next connect")
     }
 
     // -----------------------------------------------------------------------------------------
@@ -124,8 +124,8 @@ class AnovaCloudTransport @Inject constructor(
             _connectionState.value = ConnectionState.CONNECTING
             scope.launch {
                 try {
-                    AppLogger.i(TAG, "Authenticating with Firebase (Google SSO)…")
-                    val token = auth.signInWithGoogleAccessToken(googleToken)
+                    AppLogger.i(TAG, "Authenticating with Firebase (Google ID token)…")
+                    val token = auth.signInWithGoogleIdToken(googleToken)
                     if (token == null) {
                         _lastError.value = auth.lastSignInError ?: "Google sign-in failed."
                         _connectionState.value = ConnectionState.DISCONNECTED

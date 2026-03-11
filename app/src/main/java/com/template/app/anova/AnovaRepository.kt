@@ -127,9 +127,9 @@ class AnovaRepository @Inject constructor(
     /** Scans the local network for an Anova device and returns its IP, or null if not found. */
     suspend fun discoverDevice(): String? = wifiTransport.discoverDevice()
 
-    /** Use a Google OAuth access token for cloud auth instead of email/password. */
-    fun setGoogleToken(googleAccessToken: String) {
-        cloudTransport.setGoogleAccessToken(googleAccessToken)
+    /** Use a Google ID token (from CredentialManager) for cloud auth instead of email/password. */
+    fun setGoogleToken(googleIdToken: String) {
+        cloudTransport.setGoogleIdToken(googleIdToken)
     }
 
     private suspend fun connectAuto(
