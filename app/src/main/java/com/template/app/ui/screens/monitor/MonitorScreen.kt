@@ -50,24 +50,36 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.template.app.anova.ActiveTransport
 import com.template.app.anova.AnovaStatus
 import com.template.app.anova.ConnectionMode
 import com.template.app.anova.ConnectionState
 import com.template.app.anova.ThresholdSettings
+import com.template.app.logging.AppLogger
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private const val ANOVA_WEB_CLIENT_ID =
+    "322173998509-vsa6hecaqqp5cjsaja9h3cds1bhgrq3f.apps.googleusercontent.com"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,8 +99,34 @@ fun MonitorScreen(
     val isScanning by vm.isScanning.collectAsState()
     val scannedIp by vm.scannedIp.collectAsState()
 
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
     var showThresholdDialog by remember { mutableStateOf(false) }
     var showConnectionSettings by remember { mutableStateOf(false) }
+    var googleSignedInAs by remember { mutableStateOf<String?>(null) }
+
+    val credentialManager = remember { CredentialManager.create(context) }
+
+    fun launchGoogleSignIn() {
+        coroutineScope.launch {
+            try {
+                val option = GetSignInWithGoogleOption.Builder(ANOVA_WEB_CLIENT_ID).build()
+                val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
+                val result = credentialManager.getCredential(context, request)
+                val idTokenCredential = GoogleIdTokenCredential.createFrom(result.credential.data)
+                val idToken = idTokenCredential.idToken
+                val email = idTokenCredential.id
+                vm.setGoogleToken(idToken)
+                googleSignedInAs = email
+                AppLogger.i("MonitorScreen", "Google Sign-In OK: $email")
+            } catch (e: GetCredentialException) {
+                AppLogger.e("MonitorScreen", "Google Sign-In failed: ${e.type} — ${e.message}")
+            } catch (e: Exception) {
+                AppLogger.e("MonitorScreen", "Google Sign-In error: ${e.message}")
+            }
+        }
+    }
 
     val blePermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
@@ -209,6 +247,8 @@ fun MonitorScreen(
             isScanning = isScanning,
             scannedIp = scannedIp,
             onScanClick = { vm.scanForDevice() },
+            onGoogleSignInClick = ::launchGoogleSignIn,
+            googleSignedInAs = googleSignedInAs,
             onSave = { ip, email, password, localMs, remoteMs ->
                 vm.saveLocalSettings(ip, localMs)
                 if (email.isNotBlank()) vm.saveCloudSettings(email, password, remoteMs)
