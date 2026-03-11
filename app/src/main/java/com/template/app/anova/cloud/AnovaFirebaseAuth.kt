@@ -82,6 +82,69 @@ class AnovaFirebaseAuth @Inject constructor() {
     }
 
     /**
+     * Starts a browser-based Google OAuth flow.
+     * Returns a pair of (authUri, sessionId) to open in a WebView.
+     * The sessionId is needed later to exchange the redirect URL for a Firebase token.
+     */
+    suspend fun createGoogleAuthUri(): Pair<String, String>? = withContext(Dispatchers.IO) {
+        try {
+            val body = """{"providerId":"google.com","continueUri":"https://anova-app.firebaseapp.com"}"""
+            val request = Request.Builder()
+                .url(AnovaCloudConfig.FIREBASE_CREATE_AUTH_URI_URL)
+                .post(body.toRequestBody(JSON_TYPE))
+                .build()
+            val resp = client.newCall(request).execute()
+            if (!resp.isSuccessful) {
+                AppLogger.e(TAG, "createAuthUri failed ${resp.code}")
+                return@withContext null
+            }
+            val parsed = gson.fromJson(resp.body?.string(), CreateAuthUriResponse::class.java)
+            AppLogger.i(TAG, "createAuthUri OK — sessionId=${parsed.sessionId}")
+            Pair(parsed.authUri, parsed.sessionId)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "createAuthUri error: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Exchanges the full Google → Firebase redirect URL (intercepted from the WebView) for a
+     * Firebase ID token. The [sessionId] must be the one returned by [createGoogleAuthUri].
+     * On success the token is cached.
+     */
+    suspend fun signInWithGoogleRedirectUrl(redirectUrl: String, sessionId: String): String? = withContext(Dispatchers.IO) {
+        lastSignInError = null
+        AppLogger.i(TAG, "Exchanging Google redirect URL for Firebase token…")
+        try {
+            val body = """{"requestUri":"$redirectUrl","sessionId":"$sessionId","returnSecureToken":true,"returnIdpCredential":true}"""
+            val request = Request.Builder()
+                .url(AnovaCloudConfig.FIREBASE_SIGN_IN_WITH_IDP_URL)
+                .post(body.toRequestBody(JSON_TYPE))
+                .build()
+            val resp = client.newCall(request).execute()
+            if (!resp.isSuccessful) {
+                val errorBody = resp.body?.string() ?: ""
+                AppLogger.e(TAG, "signInWithIdp failed ${resp.code}: ${errorBody.take(200)}")
+                lastSignInError = "Google sign-in failed (HTTP ${resp.code})."
+                return@withContext null
+            }
+            val parsed = gson.fromJson(resp.body?.string(), FirebaseIdpResponse::class.java)
+            val expiresAt = System.currentTimeMillis() + (parsed.expiresIn?.toLongOrNull() ?: 3600L) * 1000
+            cached = CachedToken(parsed.idToken, parsed.refreshToken, expiresAt)
+            AppLogger.i(TAG, "Google redirect sign-in successful (email=${parsed.email})")
+            parsed.idToken
+        } catch (e: java.io.IOException) {
+            AppLogger.e(TAG, "Google redirect sign-in IO error: ${e.message}")
+            lastSignInError = "Cannot reach Anova servers. Check your internet connection."
+            null
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Google redirect sign-in error: ${e.message}")
+            lastSignInError = "Google sign-in failed: ${e.message}"
+            null
+        }
+    }
+
+    /**
      * Exchanges a Google ID token (from CredentialManager) for a Firebase ID token via signInWithIdp.
      * On success the token is cached so subsequent calls use the refresh path.
      * Use this after obtaining a GoogleIdTokenCredential from CredentialManager.

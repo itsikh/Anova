@@ -132,6 +132,14 @@ class AnovaRepository @Inject constructor(
         cloudTransport.setGoogleIdToken(googleIdToken)
     }
 
+    /**
+     * Call after a browser-based Google sign-in has cached the Firebase token.
+     * Switches the cloud transport to use the cached token (no re-sign-in needed).
+     */
+    fun useGoogleSsoSession() {
+        cloudTransport.useGoogleSsoSession()
+    }
+
     private suspend fun connectAuto(
         ip: String,
         email: String,

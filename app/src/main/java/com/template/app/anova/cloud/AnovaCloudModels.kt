@@ -26,6 +26,12 @@ data class FirebaseIdpResponse(
     @SerializedName("email") val email: String? = null
 )
 
+// Response from createAuthUri
+data class CreateAuthUriResponse(
+    @SerializedName("authUri") val authUri: String,
+    @SerializedName("sessionId") val sessionId: String
+)
+
 // -----------------------------------------------------------------------------------------
 // Anova device list
 // -----------------------------------------------------------------------------------------

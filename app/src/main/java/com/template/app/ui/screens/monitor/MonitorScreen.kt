@@ -61,12 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.credentials.CredentialManager
-import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.GetCredentialException
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.template.app.anova.ActiveTransport
 import com.template.app.anova.AnovaStatus
 import com.template.app.anova.ConnectionMode
@@ -77,9 +72,6 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-private const val ANOVA_WEB_CLIENT_ID =
-    "322173998509-vsa6hecaqqp5cjsaja9h3cds1bhgrq3f.apps.googleusercontent.com"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -106,30 +98,33 @@ fun MonitorScreen(
     var showConnectionSettings by remember { mutableStateOf(false) }
     var googleSignedInAs by remember { mutableStateOf<String?>(null) }
 
-    val credentialManager = remember { CredentialManager.create(context) }
+    // Google OAuth via WebView — holds (authUri, sessionId) when the dialog is open
+    var googleAuthSession by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     fun launchGoogleSignIn() {
         coroutineScope.launch {
             try {
-                // GetGoogleIdOption with filterByAuthorizedAccounts=false shows all Google accounts
-                // on the device without requiring prior authorization with this web client ID.
-                val option = GetGoogleIdOption.Builder()
-                    .setFilterByAuthorizedAccounts(false)
-                    .setServerClientId(ANOVA_WEB_CLIENT_ID)
-                    .setAutoSelectEnabled(false)
-                    .build()
-                val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
-                val result = credentialManager.getCredential(context, request)
-                val idTokenCredential = GoogleIdTokenCredential.createFrom(result.credential.data)
-                val idToken = idTokenCredential.idToken
-                val email = idTokenCredential.id
-                vm.setGoogleToken(idToken)
-                googleSignedInAs = email
-                AppLogger.i("MonitorScreen", "Google Sign-In OK: $email")
-            } catch (e: GetCredentialException) {
-                AppLogger.e("MonitorScreen", "Google Sign-In failed: ${e.type} — ${e.message}")
+                val session = vm.createGoogleAuthSession()
+                if (session == null) {
+                    AppLogger.e("MonitorScreen", "createGoogleAuthUri returned null")
+                    return@launch
+                }
+                googleAuthSession = session
             } catch (e: Exception) {
-                AppLogger.e("MonitorScreen", "Google Sign-In error: ${e.message}")
+                AppLogger.e("MonitorScreen", "Google Sign-In setup error: ${e.message}")
+            }
+        }
+    }
+
+    fun onGoogleAuthRedirect(redirectUrl: String, sessionId: String) {
+        googleAuthSession = null // close dialog
+        coroutineScope.launch {
+            val result = vm.signInWithGoogleRedirect(redirectUrl, sessionId)
+            if (result != null) {
+                googleSignedInAs = "Google account"
+                AppLogger.i("MonitorScreen", "Google Sign-In OK")
+            } else {
+                AppLogger.e("MonitorScreen", "signInWithGoogleRedirect returned null")
             }
         }
     }
@@ -260,6 +255,15 @@ fun MonitorScreen(
                 if (email.isNotBlank()) vm.saveCloudSettings(email, password, remoteMs)
             },
             onDismiss = { showConnectionSettings = false }
+        )
+    }
+
+    googleAuthSession?.let { (authUri, sessionId) ->
+        GoogleSignInWebViewDialog(
+            authUri = authUri,
+            sessionId = sessionId,
+            onAuthRedirectIntercepted = ::onGoogleAuthRedirect,
+            onDismiss = { googleAuthSession = null }
         )
     }
 }

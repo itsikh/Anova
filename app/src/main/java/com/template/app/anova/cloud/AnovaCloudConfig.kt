@@ -18,6 +18,12 @@ object AnovaCloudConfig {
     const val FIREBASE_REFRESH_URL =
         "https://securetoken.googleapis.com/v1/token?key=$FIREBASE_API_KEY"
 
+    const val FIREBASE_CREATE_AUTH_URI_URL =
+        "https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=$FIREBASE_API_KEY"
+
+    /** Firebase auth handler host — we intercept WebView navigation to this host. */
+    const val FIREBASE_AUTH_HANDLER_HOST = "anova-app.firebaseapp.com"
+
     const val ANOVA_BASE_URL = "https://oven.anovaculinary.com"
 
     // Refresh the token 5 minutes before it actually expires to avoid mid-poll failures

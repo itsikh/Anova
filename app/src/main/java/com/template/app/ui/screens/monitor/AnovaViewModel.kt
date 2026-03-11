@@ -8,6 +8,7 @@ import com.template.app.anova.AnovaRepository
 import com.template.app.anova.AnovaSettings
 import com.template.app.anova.ConnectionMode
 import com.template.app.anova.ThresholdSettings
+import com.template.app.anova.cloud.AnovaFirebaseAuth
 import com.template.app.notifications.AnovaAlertManager
 import com.template.app.security.SecureKeyManager
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -17,6 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 
 @HiltViewModel
@@ -24,7 +27,8 @@ class AnovaViewModel @Inject constructor(
     private val repository: AnovaRepository,
     private val settings: AnovaSettings,
     private val secureKeyManager: SecureKeyManager,
-    private val alertManager: AnovaAlertManager
+    private val alertManager: AnovaAlertManager,
+    private val firebaseAuth: AnovaFirebaseAuth
 ) : ViewModel() {
 
     val deviceState: StateFlow<AnovaDeviceState> = repository.deviceState
@@ -68,6 +72,25 @@ class AnovaViewModel @Inject constructor(
     fun setGoogleToken(googleAccessToken: String) {
         repository.setGoogleToken(googleAccessToken)
     }
+
+    /**
+     * Calls Firebase createAuthUri to start a browser-based Google OAuth flow.
+     * Returns (authUri, sessionId) to open in a WebView, or null on failure.
+     */
+    suspend fun createGoogleAuthSession(): Pair<String, String>? =
+        withContext(Dispatchers.IO) { firebaseAuth.createGoogleAuthUri() }
+
+    /**
+     * Exchanges the intercepted Google OAuth redirect URL + sessionId for a Firebase token.
+     * On success, tells the cloud transport to use the cached token and returns a non-null marker.
+     */
+    suspend fun signInWithGoogleRedirect(redirectUrl: String, sessionId: String): String? =
+        withContext(Dispatchers.IO) {
+            val token = firebaseAuth.signInWithGoogleRedirectUrl(redirectUrl, sessionId)
+                ?: return@withContext null
+            repository.useGoogleSsoSession()
+            token // non-null means success
+        }
 
     fun scanForDevice() {
         viewModelScope.launch {

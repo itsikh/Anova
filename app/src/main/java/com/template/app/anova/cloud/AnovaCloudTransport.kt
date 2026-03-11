@@ -81,63 +81,69 @@ class AnovaCloudTransport @Inject constructor(
         AppLogger.i(TAG, "Google ID token set — will use SSO on next connect")
     }
 
+    /**
+     * Call after a browser-based Google sign-in has already cached the Firebase token in
+     * [AnovaFirebaseAuth] (via [AnovaFirebaseAuth.signInWithGoogleRedirectUrl]).
+     * Clears email/password and any pending Google token so [connect] will use the cached token.
+     */
+    fun useGoogleSsoSession() {
+        email = null
+        password = null
+        pendingGoogleAccessToken = null
+        // NOTE: do NOT call auth.clearToken() here — the token is already cached
+        AppLogger.i(TAG, "Google SSO session active — will use cached Firebase token on connect")
+    }
+
     // -----------------------------------------------------------------------------------------
     // AnovaTransport
     // -----------------------------------------------------------------------------------------
 
-    /** [address] is ignored — cloud transport uses stored credentials or Google SSO token. */
+    /** [address] is ignored — cloud transport uses stored credentials, Google SSO token, or cached token. */
     override fun connect(address: String?) {
+        if (_connectionState.value == ConnectionState.CONNECTING) return
+        _lastError.value = null
+        _connectionState.value = ConnectionState.CONNECTING
+
         val googleToken = pendingGoogleAccessToken
-        // Require either Google SSO token or email+password
-        if (googleToken == null) {
-            val e = email?.takeIf { it.isNotBlank() } ?: run {
-                _lastError.value = "No email configured. Enter your Anova account email in Connection Settings."
-                AppLogger.e(TAG, "No email configured"); return
-            }
-            val p = password?.takeIf { it.isNotBlank() } ?: run {
-                _lastError.value = "No password configured. Enter your Anova account password in Connection Settings."
-                AppLogger.e(TAG, "No password configured"); return
-            }
-            if (_connectionState.value == ConnectionState.CONNECTING) return
-            _lastError.value = null
-            _connectionState.value = ConnectionState.CONNECTING
-            scope.launch {
-                try {
-                    AppLogger.i(TAG, "Authenticating with Firebase (email/password)…")
-                    val token = auth.getValidToken(e, p)
-                    if (token == null) {
-                        AppLogger.e(TAG, "Authentication failed — check credentials")
-                        _lastError.value = auth.lastSignInError ?: "Authentication failed. Check your credentials."
-                        _connectionState.value = ConnectionState.DISCONNECTED
-                        return@launch
+        val e = email?.takeIf { it.isNotBlank() }
+        val p = password?.takeIf { it.isNotBlank() }
+
+        scope.launch {
+            try {
+                val token = when {
+                    googleToken != null -> {
+                        // Exchange pending Google ID token (CredentialManager path)
+                        AppLogger.i(TAG, "Authenticating with Firebase (Google ID token)…")
+                        val t = auth.signInWithGoogleIdToken(googleToken)
+                        if (t != null) pendingGoogleAccessToken = null
+                        t
                     }
-                    finishConnect(token)
-                } catch (ex: Exception) {
-                    AppLogger.e(TAG, "connect() threw unexpectedly: ${ex.message}")
-                    _lastError.value = "Unexpected error: ${ex.message}"
-                    _connectionState.value = ConnectionState.DISCONNECTED
-                }
-            }
-        } else {
-            if (_connectionState.value == ConnectionState.CONNECTING) return
-            _lastError.value = null
-            _connectionState.value = ConnectionState.CONNECTING
-            scope.launch {
-                try {
-                    AppLogger.i(TAG, "Authenticating with Firebase (Google ID token)…")
-                    val token = auth.signInWithGoogleIdToken(googleToken)
-                    if (token == null) {
-                        _lastError.value = auth.lastSignInError ?: "Google sign-in failed."
-                        _connectionState.value = ConnectionState.DISCONNECTED
-                        return@launch
+                    e != null && p != null -> {
+                        // Email + password path
+                        AppLogger.i(TAG, "Authenticating with Firebase (email/password)…")
+                        auth.getValidToken(e, p)
                     }
-                    pendingGoogleAccessToken = null // token is now cached in auth, no longer needed
-                    finishConnect(token)
-                } catch (ex: Exception) {
-                    AppLogger.e(TAG, "Google connect() threw: ${ex.message}")
-                    _lastError.value = "Unexpected error: ${ex.message}"
-                    _connectionState.value = ConnectionState.DISCONNECTED
+                    else -> {
+                        // Cached token path (after browser-based Google sign-in)
+                        AppLogger.i(TAG, "Authenticating with Firebase (cached token)…")
+                        auth.getValidTokenOrRefresh()
+                    }
                 }
+
+                if (token == null) {
+                    val reason = auth.lastSignInError
+                        ?: if (googleToken != null || e == null) "Not signed in. Use 'Sign in with Google' or enter email/password."
+                        else "Authentication failed. Check your credentials."
+                    AppLogger.e(TAG, "Authentication failed: $reason")
+                    _lastError.value = reason
+                    _connectionState.value = ConnectionState.DISCONNECTED
+                    return@launch
+                }
+                finishConnect(token)
+            } catch (ex: Exception) {
+                AppLogger.e(TAG, "connect() threw unexpectedly: ${ex.message}")
+                _lastError.value = "Unexpected error: ${ex.message}"
+                _connectionState.value = ConnectionState.DISCONNECTED
             }
         }
     }
