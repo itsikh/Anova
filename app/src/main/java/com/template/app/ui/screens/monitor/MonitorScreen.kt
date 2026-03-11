@@ -65,7 +65,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.template.app.anova.ActiveTransport
 import com.template.app.anova.AnovaStatus
@@ -111,7 +111,13 @@ fun MonitorScreen(
     fun launchGoogleSignIn() {
         coroutineScope.launch {
             try {
-                val option = GetSignInWithGoogleOption.Builder(ANOVA_WEB_CLIENT_ID).build()
+                // GetGoogleIdOption with filterByAuthorizedAccounts=false shows all Google accounts
+                // on the device without requiring prior authorization with this web client ID.
+                val option = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(ANOVA_WEB_CLIENT_ID)
+                    .setAutoSelectEnabled(false)
+                    .build()
                 val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
                 val result = credentialManager.getCredential(context, request)
                 val idTokenCredential = GoogleIdTokenCredential.createFrom(result.credential.data)
