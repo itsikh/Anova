@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Anova app icon foreground: a precision cooker / sous vide wand symbol.
+    Designed on a 108×108dp canvas with a safe zone of 72×72dp (18dp inset each side).
+    White on transparent — displayed over ic_launcher_background.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Thermometer tube body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="
+            M54,18
+            C50.13,18 47,21.13 47,25
+            L47,71.5
+            C44.24,73.46 42,76.75 42,80.5
+            C42,86.85 47.37,92 54,92
+            C60.63,92 66,86.85 66,80.5
+            C66,76.75 63.76,73.46 61,71.5
+            L61,25
+            C61,21.13 57.87,18 54,18
+            Z" />
+
+    <!-- Mercury fill inside tube (warm orange) -->
+    <path
+        android:fillColor="#E85D1A"
+        android:pathData="
+            M51,48
+            L57,48
+            L57,72
+            Q54,70 51,72
+            Z" />
+
+    <!-- Bulb fill (matches orange) -->
+    <path
+        android:fillColor="#E85D1A"
+        android:pathData="
+            M54,80.5
+            m-8,0
+            a8,8 0 1,0 16,0
+            a8,8 0 1,0 -16,0" />
+
+    <!-- Tick marks on the right of the tube -->
+    <path
+        android:strokeColor="#E85D1A"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M61,36 L67,36" />
+    <path
+        android:strokeColor="#E85D1A"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M61,44 L67,44" />
+    <path
+        android:strokeColor="#E85D1A"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M61,52 L67,52" />
+    <path
+        android:strokeColor="#E85D1A"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M61,60 L67,60" />
+
+    <!-- Degree symbol top-right -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="
+            M71,24
+            m-4,0
+            a4,4 0 1,0 8,0
+            a4,4 0 1,0 -8,0" />
+    <path
+        android:fillColor="#E85D1A"
+        android:pathData="
+            M71,24
+            m-2.5,0
+            a2.5,2.5 0 1,0 5,0
+            a2.5,2.5 0 1,0 -5,0" />
+
+</vector>

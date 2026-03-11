@@ -1,0 +1,26 @@
+# Built outputs
+build/
+app/build/
+
+# Gradle
+.gradle/
+gradle/wrapper/gradle-wrapper.jar
+
+# Local machine config — never commit SDK path or signing keys
+local.properties
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+*.iws
+*.ipr
+
+# Kotlin build cache
+.kotlin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code memory (local only)
+.claude/
