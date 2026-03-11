@@ -18,6 +18,14 @@ data class FirebaseRefreshResponse(
     @SerializedName("expires_in") val expiresIn: String
 )
 
+// Response from signInWithIdp (Google SSO exchange)
+data class FirebaseIdpResponse(
+    @SerializedName("idToken") val idToken: String,
+    @SerializedName("refreshToken") val refreshToken: String,
+    @SerializedName("expiresIn") val expiresIn: String? = null,
+    @SerializedName("email") val email: String? = null
+)
+
 // -----------------------------------------------------------------------------------------
 // Anova device list
 // -----------------------------------------------------------------------------------------

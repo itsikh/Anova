@@ -63,6 +63,43 @@ class AnovaFirebaseAuth @Inject constructor() {
 
     fun clearToken() { cached = null }
 
+    /**
+     * Exchanges a Google OAuth access token for a Firebase ID token via signInWithIdp.
+     * On success the token is cached so subsequent [getValidToken] calls use the refresh path.
+     * Call this instead of [getValidToken] when the user signed in with Google SSO.
+     */
+    suspend fun signInWithGoogleAccessToken(googleAccessToken: String): String? = withContext(Dispatchers.IO) {
+        lastSignInError = null
+        AppLogger.i(TAG, "Exchanging Google access token for Firebase token via signInWithIdp…")
+        try {
+            val body = """{"requestUri":"http://localhost","postBody":"access_token=$googleAccessToken&providerId=google.com","returnSecureToken":true,"returnIdpCredential":true}"""
+            val request = Request.Builder()
+                .url(AnovaCloudConfig.FIREBASE_SIGN_IN_WITH_IDP_URL)
+                .post(body.toRequestBody(JSON_TYPE))
+                .build()
+            val resp = client.newCall(request).execute()
+            if (!resp.isSuccessful) {
+                val errorBody = resp.body?.string() ?: ""
+                AppLogger.e(TAG, "Google sign-in failed ${resp.code}: ${errorBody.take(200)}")
+                lastSignInError = "Google sign-in failed (HTTP ${resp.code})."
+                return@withContext null
+            }
+            val parsed = gson.fromJson(resp.body?.string(), FirebaseIdpResponse::class.java)
+            val expiresAt = System.currentTimeMillis() + (parsed.expiresIn?.toLongOrNull() ?: 3600L) * 1000
+            cached = CachedToken(parsed.idToken, parsed.refreshToken, expiresAt)
+            AppLogger.i(TAG, "Google SSO → Firebase sign-in successful (email=${parsed.email})")
+            parsed.idToken
+        } catch (e: java.io.IOException) {
+            AppLogger.e(TAG, "Google sign-in IO error: ${e.message}")
+            lastSignInError = "Cannot reach Anova servers. Check your internet connection."
+            null
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Google sign-in error: ${e.message}")
+            lastSignInError = "Google sign-in failed: ${e.message}"
+            null
+        }
+    }
+
     // -----------------------------------------------------------------------------------------
 
     private suspend fun signIn(email: String, password: String): CachedToken? = withContext(Dispatchers.IO) {

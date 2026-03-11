@@ -13,6 +13,8 @@ object AnovaCloudConfig {
 
     const val FIREBASE_SIGN_IN_URL =
         "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$FIREBASE_API_KEY"
+    const val FIREBASE_SIGN_IN_WITH_IDP_URL =
+        "https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=$FIREBASE_API_KEY"
     const val FIREBASE_REFRESH_URL =
         "https://securetoken.googleapis.com/v1/token?key=$FIREBASE_API_KEY"
 

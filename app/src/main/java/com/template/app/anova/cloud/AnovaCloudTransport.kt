@@ -56,6 +56,7 @@ class AnovaCloudTransport @Inject constructor(
     private var email: String? = null
     private var password: String? = null
     private var cookerId: String? = null
+    @Volatile private var pendingGoogleAccessToken: String? = null
 
     // -----------------------------------------------------------------------------------------
     // Credentials
@@ -65,7 +66,19 @@ class AnovaCloudTransport @Inject constructor(
     fun setCredentials(email: String, password: String) {
         this.email = email
         this.password = password
+        pendingGoogleAccessToken = null
         auth.clearToken()
+    }
+
+    /**
+     * Use Google SSO instead of email/password. Call before [connect].
+     * The Google access token is exchanged for a Firebase token on first connect;
+     * subsequent reconnects use the cached Firebase refresh token automatically.
+     */
+    fun setGoogleAccessToken(googleAccessToken: String) {
+        pendingGoogleAccessToken = googleAccessToken
+        auth.clearToken()
+        AppLogger.i(TAG, "Google access token set — will use SSO on next connect")
     }
 
     // -----------------------------------------------------------------------------------------

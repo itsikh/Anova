@@ -103,4 +103,7 @@ dependencies {
 
     // Gson
     implementation(libs.gson)
+
+    // Google Sign-In (for Anova cloud Google SSO)
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
 }
