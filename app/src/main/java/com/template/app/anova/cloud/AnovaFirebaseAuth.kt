@@ -88,18 +88,21 @@ class AnovaFirebaseAuth @Inject constructor() {
      */
     suspend fun createGoogleAuthUri(): Pair<String, String>? = withContext(Dispatchers.IO) {
         try {
-            val body = """{"providerId":"google.com","continueUri":"https://anova-app.firebaseapp.com"}"""
+            // identifier can be empty for social sign-in; continueUri must be an authorized domain
+            val body = """{"providerId":"google.com","continueUri":"https://anova-app.firebaseapp.com","identifier":""}"""
             val request = Request.Builder()
                 .url(AnovaCloudConfig.FIREBASE_CREATE_AUTH_URI_URL)
                 .post(body.toRequestBody(JSON_TYPE))
                 .build()
             val resp = client.newCall(request).execute()
+            val bodyStr = resp.body?.string() ?: ""
             if (!resp.isSuccessful) {
-                AppLogger.e(TAG, "createAuthUri failed ${resp.code}")
+                AppLogger.e(TAG, "createAuthUri failed ${resp.code}: ${bodyStr.take(300)}")
                 return@withContext null
             }
-            val parsed = gson.fromJson(resp.body?.string(), CreateAuthUriResponse::class.java)
-            AppLogger.i(TAG, "createAuthUri OK — sessionId=${parsed.sessionId}")
+            AppLogger.d(TAG, "createAuthUri response: ${bodyStr.take(300)}")
+            val parsed = gson.fromJson(bodyStr, CreateAuthUriResponse::class.java)
+            AppLogger.i(TAG, "createAuthUri OK — sessionId=${parsed.sessionId}, authUri starts with ${parsed.authUri.take(60)}")
             Pair(parsed.authUri, parsed.sessionId)
         } catch (e: Exception) {
             AppLogger.e(TAG, "createAuthUri error: ${e.message}")

@@ -29,10 +29,12 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -98,32 +100,44 @@ fun MonitorScreen(
     var showConnectionSettings by remember { mutableStateOf(false) }
     var googleSignedInAs by remember { mutableStateOf<String?>(null) }
 
-    // Google OAuth via WebView — holds (authUri, sessionId) when the dialog is open
+    // Google OAuth via WebView
     var googleAuthSession by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var isLoadingGoogleAuth by remember { mutableStateOf(false) }
+    var googleAuthError by remember { mutableStateOf<String?>(null) }
 
     fun launchGoogleSignIn() {
+        showConnectionSettings = false  // dismiss dialog first — avoids stacked Dialog z-order issue
+        isLoadingGoogleAuth = true
+        googleAuthError = null
         coroutineScope.launch {
             try {
                 val session = vm.createGoogleAuthSession()
+                isLoadingGoogleAuth = false
                 if (session == null) {
+                    googleAuthError = "Could not reach Google authentication server.\nCheck your internet connection and try again."
                     AppLogger.e("MonitorScreen", "createGoogleAuthUri returned null")
                     return@launch
                 }
                 googleAuthSession = session
             } catch (e: Exception) {
+                isLoadingGoogleAuth = false
+                googleAuthError = "Google Sign-In error: ${e.message}"
                 AppLogger.e("MonitorScreen", "Google Sign-In setup error: ${e.message}")
             }
         }
     }
 
     fun onGoogleAuthRedirect(redirectUrl: String, sessionId: String) {
-        googleAuthSession = null // close dialog
+        googleAuthSession = null
+        isLoadingGoogleAuth = true
         coroutineScope.launch {
             val result = vm.signInWithGoogleRedirect(redirectUrl, sessionId)
+            isLoadingGoogleAuth = false
             if (result != null) {
                 googleSignedInAs = "Google account"
                 AppLogger.i("MonitorScreen", "Google Sign-In OK")
             } else {
+                googleAuthError = "Google Sign-In failed — could not exchange credentials.\nTry again."
                 AppLogger.e("MonitorScreen", "signInWithGoogleRedirect returned null")
             }
         }
@@ -258,6 +272,32 @@ fun MonitorScreen(
         )
     }
 
+    // Loading spinner while fetching auth URL or exchanging token
+    if (isLoadingGoogleAuth) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Signing in with Google…") },
+            text = {
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) { CircularProgressIndicator() }
+            },
+            confirmButton = {}
+        )
+    }
+
+    // Error dialog
+    googleAuthError?.let { err ->
+        AlertDialog(
+            onDismissRequest = { googleAuthError = null },
+            title = { Text("Google Sign-In Failed") },
+            text = { Text(err) },
+            confirmButton = { TextButton(onClick = { googleAuthError = null }) { Text("OK") } }
+        )
+    }
+
+    // WebView OAuth dialog
     googleAuthSession?.let { (authUri, sessionId) ->
         GoogleSignInWebViewDialog(
             authUri = authUri,
