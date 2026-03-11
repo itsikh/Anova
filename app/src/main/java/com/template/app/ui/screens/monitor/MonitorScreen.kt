@@ -59,8 +59,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.google.android.gms.auth.GoogleAuthUtil
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.template.app.anova.ActiveTransport
+import com.template.app.logging.AppLogger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.template.app.anova.AnovaStatus
 import com.template.app.anova.ConnectionMode
 import com.template.app.anova.ConnectionState
@@ -87,8 +96,43 @@ fun MonitorScreen(
     val isScanning by vm.isScanning.collectAsState()
     val scannedIp by vm.scannedIp.collectAsState()
 
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
     var showThresholdDialog by remember { mutableStateOf(false) }
     var showConnectionSettings by remember { mutableStateOf(false) }
+    var googleSignedInAs by remember { mutableStateOf<String?>(null) }
+
+    val googleSignInClient = remember {
+        GoogleSignIn.getClient(context, GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).requestEmail().build())
+    }
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        try {
+            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data).result
+            val email = account.email ?: return@rememberLauncherForActivityResult
+            coroutineScope.launch {
+                try {
+                    val token = withContext(Dispatchers.IO) {
+                        GoogleAuthUtil.getToken(
+                            context,
+                            account.account!!,
+                            "oauth2:https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
+                        )
+                    }
+                    vm.setGoogleToken(token)
+                    googleSignedInAs = email
+                    AppLogger.i("MonitorScreen", "Google Sign-In OK: $email")
+                } catch (e: Exception) {
+                    AppLogger.e("MonitorScreen", "Failed to get Google access token: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            AppLogger.e("MonitorScreen", "Google Sign-In result error: ${e.message}")
+        }
+    }
+
 
     val blePermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
@@ -209,6 +253,12 @@ fun MonitorScreen(
             isScanning = isScanning,
             scannedIp = scannedIp,
             onScanClick = { vm.scanForDevice() },
+            onGoogleSignInClick = {
+                googleSignInClient.signOut().addOnCompleteListener {
+                    googleSignInLauncher.launch(googleSignInClient.signInIntent)
+                }
+            },
+            googleSignedInAs = googleSignedInAs,
             onSave = { ip, email, password, localMs, remoteMs ->
                 vm.saveLocalSettings(ip, localMs)
                 if (email.isNotBlank()) vm.saveCloudSettings(email, password, remoteMs)
