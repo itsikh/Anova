@@ -22,5 +22,10 @@ local.properties
 .DS_Store
 Thumbs.db
 
-# Claude Code memory (local only)
-.claude/
+# Claude Code — commit skills, ignore local memory and settings
+.claude/projects/
+.claude/settings.local.json
+.claude/todos/
+
+# Autofix logs (local only)
+.autofix-logs/
