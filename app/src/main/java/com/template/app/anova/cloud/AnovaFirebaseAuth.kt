@@ -64,6 +64,24 @@ class AnovaFirebaseAuth @Inject constructor() {
     fun clearToken() { cached = null }
 
     /**
+     * Returns a valid Firebase ID token using only the cache or refresh token — no credentials needed.
+     * Used after Google SSO login where email/password are not stored.
+     */
+    suspend fun getValidTokenOrRefresh(): String? {
+        val existing = cached
+        if (existing != null && System.currentTimeMillis() < existing.expiresAt - AnovaCloudConfig.TOKEN_EXPIRY_MARGIN_MS) {
+            AppLogger.d(TAG, "Token cache hit (no-credentials path)")
+            return existing.idToken
+        }
+        if (existing?.refreshToken != null) {
+            val refreshed = refresh(existing.refreshToken)
+            if (refreshed != null) { cached = refreshed; return refreshed.idToken }
+        }
+        AppLogger.w(TAG, "No valid cached token and no credentials to re-authenticate")
+        return null
+    }
+
+    /**
      * Exchanges a Google OAuth access token for a Firebase ID token via signInWithIdp.
      * On success the token is cached so subsequent [getValidToken] calls use the refresh path.
      * Call this instead of [getValidToken] when the user signed in with Google SSO.

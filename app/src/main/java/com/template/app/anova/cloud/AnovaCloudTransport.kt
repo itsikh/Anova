@@ -162,11 +162,13 @@ class AnovaCloudTransport @Inject constructor(
     }
 
     override suspend fun poll(): AnovaRawState? = withContext(Dispatchers.IO) {
-        val e = email ?: return@withContext null
-        val p = password ?: return@withContext null
         val id = cookerId ?: return@withContext null
 
-        val token = auth.getValidToken(e, p) ?: run {
+        val token = if (email != null && password != null) {
+            auth.getValidToken(email!!, password!!)
+        } else {
+            auth.getValidTokenOrRefresh()
+        } ?: run {
             AppLogger.e(TAG, "Token unavailable — marking disconnected")
             _connectionState.value = ConnectionState.DISCONNECTED
             return@withContext null

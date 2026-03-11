@@ -92,8 +92,12 @@ Common issues and how to fix them:
 Constraints: minimal changes only. Do not remove a live lock. All strings in English."
 
     log "Calling Claude to diagnose and fix..."
-    claude --dangerously-skip-permissions -p "$fix_prompt" </dev/null 2>&1
+    local fix_file
+    fix_file=$(mktemp)
+    printf '%s' "$fix_prompt" > "$fix_file"
+    claude --dangerously-skip-permissions --print < "$fix_file" 2>&1
     claude_exit=$?
+    rm -f "$fix_file"
 
     if [[ $claude_exit -ne 0 ]]; then
         log_err "Claude exited $claude_exit — retrying autofix.sh anyway..."

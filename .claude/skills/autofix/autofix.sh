@@ -262,13 +262,16 @@ attempt_fix() {
 
     log "Invoking Claude CLI..."
     local claude_exit=0
-    local claude_tmp
+    local claude_tmp prompt_file
     claude_tmp=$(mktemp)
-    claude --dangerously-skip-permissions -p "$prompt" 2>&1 | tee -a "$task_log" "$claude_tmp"
+    prompt_file=$(mktemp)
+    printf '%s' "$prompt" > "$prompt_file"
+    # Pass prompt via stdin to avoid ARG_MAX limits and reduce shell memory pressure
+    claude --dangerously-skip-permissions --print < "$prompt_file" 2>&1 | tee -a "$task_log" "$claude_tmp"
     claude_exit=${PIPESTATUS[0]}
     local claude_output
     claude_output=$(cat "$claude_tmp")
-    rm -f "$claude_tmp"
+    rm -f "$claude_tmp" "$prompt_file"
 
     if [[ $claude_exit -ne 0 ]]; then
         log_error "Claude CLI exited with code $claude_exit"

@@ -62,9 +62,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
+import android.accounts.Account
+import android.accounts.AccountManager
+import android.app.Activity
 import com.google.android.gms.auth.GoogleAuthUtil
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.template.app.anova.ActiveTransport
 import com.template.app.logging.AppLogger
 import kotlinx.coroutines.Dispatchers
