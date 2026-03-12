@@ -171,7 +171,12 @@ class AnovaCloudTransport @Inject constructor(
         connectionTimeoutJob?.cancel()
 
         val url = "${AnovaCloudConfig.ANOVA_WS_BASE}?token=$jwt&supportedAccessories=APC,APO&platform=android"
-        val request = Request.Builder().url(url).build()
+        // Send the JWT both as a query param (legacy) and as an Authorization header
+        // in case the server has migrated to header-based auth.
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $jwt")
+            .build()
         AppLogger.i(TAG, "Opening WebSocket…")
         webSocket = client.newWebSocket(request, listener)
         // If EVENT_APC_WIFI_LIST never arrives, stop waiting after 30s so the
@@ -190,8 +195,17 @@ class AnovaCloudTransport @Inject constructor(
 
     private val listener = object : WebSocketListener() {
         override fun onOpen(ws: WebSocket, response: Response) {
-            AppLogger.i(TAG, "WebSocket opened — waiting for device list…")
-            // Wait for EVENT_APC_WIFI_LIST before marking connected
+            AppLogger.i(TAG, "WebSocket opened — requesting device list…")
+            // Proactively request device status — some server versions require an explicit
+            // trigger before sending EVENT_APC_WIFI_LIST rather than pushing it automatically.
+            val cmd = WsCommand(
+                type = "CMD_APC_REQUEST_DEVICE_STATUS",
+                id = UUID.randomUUID().toString(),
+                payload = emptyMap()
+            )
+            val json = gson.toJson(cmd)
+            AppLogger.i(TAG, "WS → ${json.take(120)}")
+            ws.send(json)
         }
 
         override fun onMessage(ws: WebSocket, text: String) {

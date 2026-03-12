@@ -75,10 +75,10 @@ class AnovaFirebaseAuth @Inject constructor(
             val expiry = decodeJwtExpiry(storedJwt)
             val now = System.currentTimeMillis()
             if (expiry - now > AnovaCloudConfig.ANOVA_JWT_REFRESH_THRESHOLD_MS) {
-                AppLogger.d(TAG, "Anova JWT cache hit (expires in ${(expiry - now) / 86400_000}d)")
+                AppLogger.i(TAG, "Anova JWT cache hit (expires in ${(expiry - now) / 86400_000}d, ${java.util.Date(expiry)})")
                 return storedJwt
             }
-            AppLogger.i(TAG, "Anova JWT within 90-day refresh window — refreshing")
+            AppLogger.i(TAG, "Anova JWT within 90-day refresh window — refreshing (expires ${java.util.Date(expiry)})")
         }
 
         // Get a Firebase ID token (using stored refresh token)
@@ -247,6 +247,10 @@ class AnovaFirebaseAuth @Inject constructor(
                 AppLogger.d(TAG, "Anova auth response: ${body.take(100)}")
                 val parsed = gson.fromJson(body, AnovaAuthResponse::class.java)
                 val jwt = parsed.jwt
+                if (jwt.isNullOrBlank()) {
+                    AppLogger.w(TAG, "Anova JWT exchange succeeded but jwt field is empty — response: ${body.take(200)}")
+                    return@withContext null
+                }
                 secureKeyManager.saveKey(KEY_ANOVA_JWT, jwt)
                 val expMs = decodeJwtExpiry(jwt)
                 AppLogger.i(TAG, "Anova JWT stored — expires ${java.util.Date(expMs)}")
