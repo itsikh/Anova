@@ -36,20 +36,21 @@ data class AnovaAuthResponse(
 
 // ── WebSocket messages ────────────────────────────────────────────────────────
 
-/** Generic wrapper to read the `type` field of any inbound WS event. */
-data class WsTypeOnly(@SerializedName("type") val type: String?)
+/** Generic wrapper to read the `command` field of any inbound WS event. */
+data class WsCommandOnly(@SerializedName("command") val command: String?)
 
-/** Outbound command envelope. */
+/** Outbound command envelope. Server expects `command` (not `type`). */
 data class WsCommand(
-    @SerializedName("type")    val type: String,
+    @SerializedName("command") val command: String,
     @SerializedName("id")      val id: String,
     @SerializedName("payload") val payload: Map<String, Any?>
 )
 
 // EVENT_APC_WIFI_LIST
+// payload is a list of connected devices
 data class WsApcWifiListEvent(
-    @SerializedName("type") val type: String?,
-    @SerializedName("body") val body: List<ApcDeviceInfo>?
+    @SerializedName("command") val command: String?,
+    @SerializedName("payload") val payload: List<ApcDeviceInfo>?
 )
 
 data class ApcDeviceInfo(
@@ -59,33 +60,53 @@ data class ApcDeviceInfo(
 )
 
 // EVENT_APC_STATE
+// payload.cookerId, payload.state.nodes.waterTemperatureSensor.{current,setpoint}.{celsius,fahrenheit}
+// payload.state.state.{mode, temperatureUnit}
+// payload.state.nodes.timer.{initial, startedAtTimestamp}
 data class WsApcStateEvent(
-    @SerializedName("type") val type: String?,
-    @SerializedName("body") val body: ApcStateBody?
+    @SerializedName("command") val command: String?,
+    @SerializedName("payload") val payload: ApcStatePayload?
 )
 
-data class ApcStateBody(
-    @SerializedName("cookerId")     val cookerId: String?,
-    @SerializedName("status")       val status: String?,       // "cook" | "idle"
-    @SerializedName("targetTemp")   val targetTemp: Float?,
-    @SerializedName("currentTemp")  val currentTemp: Float?,
-    @SerializedName("unit")         val unit: String?,          // "c" | "f"
-    @SerializedName("timer")        val timer: ApcTimer?
+data class ApcStatePayload(
+    @SerializedName("cookerId") val cookerId: String?,
+    @SerializedName("state")    val state: ApcStateData?
 )
 
-data class ApcTimer(
-    @SerializedName("running") val running: Boolean?,
-    @SerializedName("initial") val initial: Int?,
-    @SerializedName("elapsed") val elapsed: Int?
-) {
-    /** Remaining seconds, or null if timer data is incomplete. */
-    val remainingSeconds: Int?
-        get() {
-            val i = initial ?: return null
-            val e = elapsed ?: return null
-            return (i - e).coerceAtLeast(0)
-        }
-}
+data class ApcStateData(
+    @SerializedName("nodes") val nodes: ApcStateNodes?,
+    @SerializedName("state") val state: ApcStateMode?,
+    @SerializedName("systemInfo") val systemInfo: ApcSystemInfo?
+)
+
+data class ApcStateNodes(
+    @SerializedName("waterTemperatureSensor") val waterTemperatureSensor: ApcTempSensor?,
+    @SerializedName("timer")                  val timer: ApcTimerNode?
+)
+
+data class ApcTempSensor(
+    @SerializedName("current")  val current: ApcTempValue?,
+    @SerializedName("setpoint") val setpoint: ApcTempValue?
+)
+
+data class ApcTempValue(
+    @SerializedName("celsius")    val celsius: Float?,
+    @SerializedName("fahrenheit") val fahrenheit: Float?
+)
+
+data class ApcStateMode(
+    @SerializedName("mode")            val mode: String?,            // "cook" | "idle"
+    @SerializedName("temperatureUnit") val temperatureUnit: String?  // "C" | "F"
+)
+
+data class ApcSystemInfo(
+    @SerializedName("online") val online: Boolean?
+)
+
+data class ApcTimerNode(
+    @SerializedName("initial")              val initial: Int?,
+    @SerializedName("startedAtTimestamp")   val startedAtTimestamp: String?
+)
 
 // ── Old REST models (kept for reference / potential fallback) ─────────────────
 

@@ -24,6 +24,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,7 +38,7 @@ class AnovaCloudTransport @Inject constructor(
 
     // No pingInterval — the Anova server does not respond to WebSocket pings,
     // causing OkHttp to close the connection after every ping timeout.
-    // Application-level keepalive is handled by CMD_APC_REQUEST_DEVICE_STATUS polls.
+    // State is pushed automatically by the server after connection.
     private val client = OkHttpClient.Builder()
         .build()
     private val gson = Gson()
@@ -108,16 +109,18 @@ class AnovaCloudTransport @Inject constructor(
                     else -> { /* use stored session */ }
                 }
 
-                val jwt = auth.getAnovaJwt()
-                if (jwt == null) {
+                // The WebSocket requires the Firebase ID token (1-hour lifetime),
+                // NOT the Anova JWT. The Anova JWT causes a 1005 close.
+                val firebaseToken = auth.getValidTokenOrRefresh()
+                if (firebaseToken == null) {
                     val reason = auth.lastSignInError ?: "Not signed in. Configure your Anova account."
-                    AppLogger.e(TAG, "No Anova JWT — $reason")
+                    AppLogger.e(TAG, "No Firebase token — $reason")
                     _lastError.value = reason
                     _connectionState.value = ConnectionState.DISCONNECTED
                     return@launch
                 }
 
-                openWebSocket(jwt)
+                openWebSocket(firebaseToken)
             } catch (ex: Exception) {
                 AppLogger.e(TAG, "connect() error: ${ex.message}")
                 _lastError.value = "Connection error: ${ex.message}"
@@ -138,9 +141,8 @@ class AnovaCloudTransport @Inject constructor(
     }
 
     override suspend fun poll(): AnovaRawState? {
-        if (_connectionState.value == ConnectionState.CONNECTED) {
-            sendStatusRequest()
-        }
+        // Cloud transport is push-based; the server sends EVENT_APC_STATE automatically.
+        // poll() just returns the last cached state without sending any request.
         return cachedRawState
     }
 
@@ -164,23 +166,19 @@ class AnovaCloudTransport @Inject constructor(
 
     // ── WebSocket ─────────────────────────────────────────────────────────────
 
-    private fun openWebSocket(jwt: String) {
+    private fun openWebSocket(firebaseToken: String) {
         // Cancel any timeout launched by a previous (failed) connection attempt.
-        // Without this, stale timeout coroutines accumulate during DNS-failure retries
-        // and fire after a later attempt succeeds, killing a good connection.
         connectionTimeoutJob?.cancel()
 
-        val url = "${AnovaCloudConfig.ANOVA_WS_BASE}?token=$jwt&supportedAccessories=APC,APO&platform=android"
-        // Send the JWT both as a query param (legacy) and as an Authorization header
-        // in case the server has migrated to header-based auth.
+        // IMPORTANT: Use Firebase ID token (not Anova JWT) — Anova JWT causes 1005 close.
+        val url = "${AnovaCloudConfig.ANOVA_WS_BASE}?token=$firebaseToken&supportedAccessories=APC,APO&platform=android"
         val request = Request.Builder()
             .url(url)
-            .header("Authorization", "Bearer $jwt")
+            .header("Authorization", "Bearer $firebaseToken")
             .build()
         AppLogger.i(TAG, "Opening WebSocket…")
         webSocket = client.newWebSocket(request, listener)
-        // If EVENT_APC_WIFI_LIST never arrives, stop waiting after 30s so the
-        // UI can show an error instead of being permanently stuck at CONNECTING.
+        // If EVENT_APC_WIFI_LIST never arrives, stop waiting after 30s.
         connectionTimeoutJob = scope.launch {
             delay(30_000)
             if (_connectionState.value == ConnectionState.CONNECTING) {
@@ -195,17 +193,8 @@ class AnovaCloudTransport @Inject constructor(
 
     private val listener = object : WebSocketListener() {
         override fun onOpen(ws: WebSocket, response: Response) {
-            AppLogger.i(TAG, "WebSocket opened — requesting device list…")
-            // Proactively request device status — some server versions require an explicit
-            // trigger before sending EVENT_APC_WIFI_LIST rather than pushing it automatically.
-            val cmd = WsCommand(
-                type = "CMD_APC_REQUEST_DEVICE_STATUS",
-                id = UUID.randomUUID().toString(),
-                payload = emptyMap()
-            )
-            val json = gson.toJson(cmd)
-            AppLogger.i(TAG, "WS → ${json.take(120)}")
-            ws.send(json)
+            // Server pushes EVENT_APC_WIFI_LIST automatically — no explicit request needed.
+            AppLogger.i(TAG, "WebSocket opened — waiting for device list…")
         }
 
         override fun onMessage(ws: WebSocket, text: String) {
@@ -213,9 +202,6 @@ class AnovaCloudTransport @Inject constructor(
         }
 
         override fun onClosing(ws: WebSocket, code: Int, reason: String) {
-            // Server is initiating the close. Acknowledge it immediately so OkHttp doesn't
-            // leave the connection half-open. Without this override, OkHttp waits for the
-            // app to call ws.close() — causing a 30s timeout before the error is shown.
             AppLogger.i(TAG, "WebSocket closing (server): $code $reason")
             ws.close(1000, "")
             if (_connectionState.value == ConnectionState.CONNECTING) {
@@ -250,12 +236,13 @@ class AnovaCloudTransport @Inject constructor(
 
     private fun handleMessage(text: String) {
         try {
-            val typeOnly = gson.fromJson(text, WsTypeOnly::class.java)
-            AppLogger.d(TAG, "WS msg [${typeOnly.type}]: ${text.take(200)}")
-            when (typeOnly.type) {
+            // Server sends "command" field, NOT "type"
+            val cmdOnly = gson.fromJson(text, WsCommandOnly::class.java)
+            AppLogger.d(TAG, "WS msg [${cmdOnly.command}]: ${text.take(200)}")
+            when (cmdOnly.command) {
                 "EVENT_APC_WIFI_LIST"  -> handleWifiList(text)
                 "EVENT_APC_STATE"      -> handleState(text)
-                else -> AppLogger.i(TAG, "Unhandled WS type: ${typeOnly.type} — ${text.take(120)}")
+                else -> AppLogger.i(TAG, "Unhandled WS command: ${cmdOnly.command} — ${text.take(120)}")
             }
         } catch (e: Exception) {
             AppLogger.w(TAG, "Message parse error: ${e.message} — ${text.take(120)}")
@@ -264,7 +251,7 @@ class AnovaCloudTransport @Inject constructor(
 
     private fun handleWifiList(text: String) {
         val event = gson.fromJson(text, WsApcWifiListEvent::class.java)
-        val device = event.body?.firstOrNull()
+        val device = event.payload?.firstOrNull()
         if (device?.cookerId != null) {
             cookerId = device.cookerId
             _deviceName.value = device.name ?: "Anova Precision Cooker"
@@ -272,7 +259,6 @@ class AnovaCloudTransport @Inject constructor(
             connectionTimeoutJob = null
             _connectionState.value = ConnectionState.CONNECTED
             AppLogger.i(TAG, "Connected — cookerId=${device.cookerId} name=${device.name}")
-            sendStatusRequest()
         } else {
             AppLogger.w(TAG, "EVENT_APC_WIFI_LIST had no devices")
             _lastError.value = "No Anova device found on this account."
@@ -282,38 +268,62 @@ class AnovaCloudTransport @Inject constructor(
 
     private fun handleState(text: String) {
         val event = gson.fromJson(text, WsApcStateEvent::class.java)
-        val body = event.body ?: return
+        val payload = event.payload ?: return
+        val stateData = payload.state ?: return
+        val nodes = stateData.nodes
+        val modeState = stateData.state
 
-        val unit = if (body.unit?.trim().equals("f", ignoreCase = true))
-            TempUnit.FAHRENHEIT else TempUnit.CELSIUS
-        val status = when (body.status?.lowercase()) {
+        val unitStr = modeState?.temperatureUnit?.trim()
+        val unit = if (unitStr.equals("F", ignoreCase = true)) TempUnit.FAHRENHEIT else TempUnit.CELSIUS
+
+        val tempSensor = nodes?.waterTemperatureSensor
+        val currentTemp = if (unit == TempUnit.FAHRENHEIT)
+            tempSensor?.current?.fahrenheit
+        else
+            tempSensor?.current?.celsius
+
+        val targetTemp = if (unit == TempUnit.FAHRENHEIT)
+            tempSensor?.setpoint?.fahrenheit
+        else
+            tempSensor?.setpoint?.celsius
+
+        val status = when (modeState?.mode?.lowercase()) {
             "cook" -> AnovaStatus.RUNNING
             "idle" -> AnovaStatus.STOPPED
             else   -> AnovaStatus.UNKNOWN
         }
-        val timerRemainingSec = body.timer?.remainingSeconds
-        val timerRemainingMin = timerRemainingSec?.let { it / 60 }
+
+        // Timer remaining: calculate from startedAtTimestamp + initial duration
+        val timerNode = nodes?.timer
+        val timerRemainingMin: Int? = run {
+            val initial = timerNode?.initial ?: return@run null
+            val startedAt = timerNode.startedAtTimestamp ?: return@run null
+            try {
+                val startMs = Instant.parse(startedAt).toEpochMilli()
+                val elapsedSec = ((System.currentTimeMillis() - startMs) / 1000).toInt()
+                val remainingSec = (initial - elapsedSec).coerceAtLeast(0)
+                remainingSec / 60
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Timer parse error: ${e.message}")
+                null
+            }
+        }
 
         val raw = AnovaRawState(
-            currentTemp  = body.currentTemp,
-            targetTemp   = body.targetTemp,
+            currentTemp  = currentTemp,
+            targetTemp   = targetTemp,
             unit         = unit,
             timerMinutes = timerRemainingMin,
             status       = status
         )
         cachedRawState = raw
         scope.launch { _rawStateFlow.emit(raw) }
-        AppLogger.d(TAG, "State: ${body.currentTemp}° → ${body.targetTemp}° status=${body.status} timer=${timerRemainingMin}m")
+        AppLogger.d(TAG, "State: ${currentTemp}° → ${targetTemp}° status=${modeState?.mode} timer=${timerRemainingMin}m")
     }
 
-    private fun sendStatusRequest() {
-        val id = cookerId ?: return
-        sendCommand("CMD_APC_REQUEST_DEVICE_STATUS", mapOf("cookerId" to id))
-    }
-
-    private fun sendCommand(type: String, payload: Map<String, Any?>): Boolean {
+    private fun sendCommand(command: String, payload: Map<String, Any?>): Boolean {
         val ws = webSocket ?: return false
-        val cmd = WsCommand(type = type, id = UUID.randomUUID().toString(), payload = payload)
+        val cmd = WsCommand(command = command, id = UUID.randomUUID().toString(), payload = payload)
         val json = gson.toJson(cmd)
         AppLogger.d(TAG, "Sending: ${json.take(120)}")
         return ws.send(json)
