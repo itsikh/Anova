@@ -106,10 +106,12 @@ fun MonitorScreen(
     var googleAuthError by remember { mutableStateOf<String?>(null) }
 
     fun launchGoogleSignIn() {
+        AppLogger.i("MonitorScreen", "launchGoogleSignIn called")
         showConnectionSettings = false  // dismiss dialog first — avoids stacked Dialog z-order issue
         googleAuthError = null
-        // URL construction is local/synchronous — no network call needed
-        googleAuthSession = vm.createGoogleAuthSession()
+        val session = vm.createGoogleAuthSession()
+        AppLogger.i("MonitorScreen", "googleAuthSession set — authUri starts: ${session.first.take(60)}")
+        googleAuthSession = session
     }
 
     fun onGoogleAuthRedirect(redirectUrl: String, sessionId: String) {

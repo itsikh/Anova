@@ -1,6 +1,9 @@
 package com.template.app.ui.screens.monitor
 
 import android.annotation.SuppressLint
+import android.net.http.SslError
+import android.webkit.SslErrorHandler
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -32,19 +35,10 @@ import com.template.app.logging.AppLogger
 
 private const val TAG = "GoogleSignInWebView"
 
-/**
- * Full-screen dialog that hosts a WebView for Google OAuth sign-in.
- *
- * Flow:
- * 1. WebView loads [authUri] (Google's OAuth consent screen via Firebase's createAuthUri)
- * 2. User signs in with their Google account
- * 3. Google redirects to https://anova-app.firebaseapp.com/__/auth/handler?code=...
- * 4. We intercept that redirect in [WebViewClient.shouldOverrideUrlLoading]
- * 5. [onAuthRedirectIntercepted] is called with the full redirect URL + [sessionId]
- *
- * The caller (MonitorScreen) is responsible for calling Firebase signInWithIdp with
- * the intercepted URL and sessionId.
- */
+// Google blocks sign-in from Android WebView user agents. Spoofing as Chrome bypasses this.
+private const val CHROME_UA =
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun GoogleSignInWebViewDialog(
@@ -54,6 +48,8 @@ fun GoogleSignInWebViewDialog(
     onDismiss: () -> Unit
 ) {
     var isLoading by remember { mutableStateOf(true) }
+
+    AppLogger.i(TAG, "Dialog composed — loading authUri: ${authUri.take(80)}…")
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -68,7 +64,6 @@ fun GoogleSignInWebViewDialog(
             color = MaterialTheme.colorScheme.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top bar
                 Surface(shadowElevation = 2.dp) {
                     Box(
                         modifier = Modifier
@@ -95,9 +90,39 @@ fun GoogleSignInWebViewDialog(
                             WebView(ctx).apply {
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
+                                // Spoof Chrome user agent — Google blocks "Android WebView" UA
+                                settings.userAgentString = CHROME_UA
+                                AppLogger.i(TAG, "WebView created, UA set to Chrome")
+
                                 webViewClient = object : WebViewClient() {
+                                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                                        AppLogger.d(TAG, "onPageStarted: ${url?.take(120)}")
+                                        isLoading = true
+                                    }
+
                                     override fun onPageFinished(view: WebView?, url: String?) {
+                                        AppLogger.d(TAG, "onPageFinished: ${url?.take(120)}")
                                         isLoading = false
+                                    }
+
+                                    override fun onReceivedError(
+                                        view: WebView?,
+                                        request: WebResourceRequest?,
+                                        error: WebResourceError?
+                                    ) {
+                                        val url = request?.url?.toString() ?: "?"
+                                        val desc = error?.description ?: "?"
+                                        val code = error?.errorCode ?: -1
+                                        // Only log main-frame errors (not sub-resource failures)
+                                        if (request?.isForMainFrame == true) {
+                                            AppLogger.e(TAG, "Main frame error [$code] $desc — url: ${url.take(120)}")
+                                        }
+                                    }
+
+                                    @Deprecated("Deprecated in Java")
+                                    override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                                        AppLogger.e(TAG, "SSL error: ${error?.primaryError} — proceeding anyway")
+                                        handler?.proceed()
                                     }
 
                                     override fun shouldOverrideUrlLoading(
@@ -106,16 +131,18 @@ fun GoogleSignInWebViewDialog(
                                     ): Boolean {
                                         val url = request?.url?.toString() ?: return false
                                         val host = request.url?.host ?: ""
+                                        AppLogger.d(TAG, "shouldOverrideUrlLoading host=$host url=${url.take(120)}")
 
-                                        // Intercept Google's redirect back to Firebase's auth handler
                                         if (host == AnovaCloudConfig.FIREBASE_AUTH_HANDLER_HOST) {
-                                            AppLogger.i(TAG, "Intercepted Firebase auth handler redirect")
+                                            AppLogger.i(TAG, "✅ Intercepted Firebase auth handler redirect — exchanging for token")
                                             onAuthRedirectIntercepted(url, sessionId)
-                                            return true // prevent WebView from loading it
+                                            return true
                                         }
                                         return false
                                     }
                                 }
+
+                                AppLogger.i(TAG, "WebView.loadUrl called")
                                 loadUrl(authUri)
                             }
                         },
