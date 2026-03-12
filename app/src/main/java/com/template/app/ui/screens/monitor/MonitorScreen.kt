@@ -33,7 +33,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
@@ -109,8 +108,6 @@ private val DC_TextMuted   = Color(0xFF606060)
 private val DC_Orange      = Color(0xFFFF6600)
 private val DC_AlertBg     = Color(0x1AFF6600)
 private val DC_AlertBorder = Color(0x44FF6600)
-private val DC_IconBg      = Color(0x12FFFFFF)
-private val DC_IconBorder  = Color(0x18FFFFFF)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -189,7 +186,6 @@ fun MonitorScreen(
     }
 
     val isConnected = state.connectionState == ConnectionState.CONNECTED
-    val alertActive = thresholds.minTempEnabled || thresholds.maxTempEnabled
     val timerFinishEpochMs = state.timerMinutes?.let { System.currentTimeMillis() + it * 60_000L }
 
     Scaffold(
@@ -206,29 +202,6 @@ fun MonitorScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = DC_Bg),
                 actions = {
-                    IconButton(onClick = { showThresholdDialog = true }) {
-                        Box(
-                            Modifier
-                                .size(34.dp)
-                                .background(
-                                    if (alertActive) DC_AlertBg else DC_IconBg,
-                                    RoundedCornerShape(10.dp)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (alertActive) DC_AlertBorder else DC_IconBorder,
-                                    RoundedCornerShape(10.dp)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                if (alertActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
-                                "Alerts",
-                                tint = if (alertActive) DC_Orange else DC_TextDim,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
                     IconButton(onClick = onOpenSchedule) {
                         Icon(Icons.Default.DateRange, "Schedule", tint = DC_TextDim)
                     }
