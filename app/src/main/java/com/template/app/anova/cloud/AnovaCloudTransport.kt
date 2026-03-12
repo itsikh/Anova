@@ -144,6 +144,8 @@ class AnovaCloudTransport @Inject constructor(
     }
 
     override fun disconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = null
         connectionTimeoutJob?.cancel()
         connectionTimeoutJob = null
         webSocket?.close(1000, "User disconnected")
@@ -153,6 +155,48 @@ class AnovaCloudTransport @Inject constructor(
         cachedRawState = null
         _connectionState.value = ConnectionState.DISCONNECTED
         _deviceName.value = null
+    }
+
+    // ── Reconnect with backoff ─────────────────────────────────────────────────
+
+    private var reconnectJob: Job? = null
+
+    /**
+     * Called on unexpected connection loss. Retries with linear backoff
+     * (5 s, 10 s, 15 s, 20 s, 30 s, 60 s). Sets RECONNECTING so the repository
+     * knows not to fire the offline notification yet. Only after all attempts fail
+     * does it transition to DISCONNECTED, which triggers the offline alert.
+     */
+    private fun startReconnectBackoff() {
+        if (reconnectJob?.isActive == true) return  // already running
+        _connectionState.value = ConnectionState.RECONNECTING
+        reconnectJob = scope.launch {
+            val backoffMs = listOf(5_000L, 10_000L, 15_000L, 20_000L, 30_000L, 60_000L)
+            for ((i, delayMs) in backoffMs.withIndex()) {
+                AppLogger.i(TAG, "Reconnect attempt ${i + 1}/${backoffMs.size} in ${delayMs / 1000}s…")
+                delay(delayMs)
+                if (!isActive) return@launch
+
+                val token = try { auth.getValidTokenOrRefresh() } catch (e: Exception) { null }
+                if (token == null) {
+                    AppLogger.w(TAG, "No valid token for reconnect attempt ${i + 1}")
+                    continue
+                }
+                openWebSocket(token)
+
+                // Wait up to 15 s to see if the connection succeeds
+                var waited = 0L
+                while (waited < 15_000L && isActive) {
+                    delay(500L); waited += 500L
+                    if (_connectionState.value == ConnectionState.CONNECTED) {
+                        AppLogger.i(TAG, "Reconnected successfully on attempt ${i + 1}")
+                        return@launch
+                    }
+                }
+            }
+            AppLogger.e(TAG, "All ${backoffMs.size} reconnect attempts failed — giving up")
+            _connectionState.value = ConnectionState.DISCONNECTED
+        }
     }
 
     override suspend fun poll(): AnovaRawState? {
@@ -278,15 +322,8 @@ class AnovaCloudTransport @Inject constructor(
         override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
             AppLogger.e(TAG, "WebSocket failure: ${t.message}")
             _lastError.value = "Connection lost: ${t.message}"
-            _connectionState.value = ConnectionState.DISCONNECTED
-            // Schedule reconnect
-            scope.launch {
-                delay(5_000)
-                if (_connectionState.value == ConnectionState.DISCONNECTED) {
-                    AppLogger.i(TAG, "Auto-reconnecting…")
-                    connect()
-                }
-            }
+            webSocket = null
+            startReconnectBackoff()
         }
     }
 
