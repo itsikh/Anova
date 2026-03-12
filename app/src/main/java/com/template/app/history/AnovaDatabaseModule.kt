@@ -1,6 +1,7 @@
 package com.template.app.history
 
 import android.content.Context
+import com.template.app.presets.PresetDao
 import com.template.app.schedule.ScheduleDao
 import dagger.Module
 import dagger.Provides
@@ -27,4 +28,9 @@ object AnovaDatabaseModule {
     @Singleton
     fun provideScheduleDao(db: AnovaDatabase): ScheduleDao =
         db.scheduleDao()
+
+    @Provides
+    @Singleton
+    fun providePresetDao(db: AnovaDatabase): PresetDao =
+        db.presetDao()
 }
