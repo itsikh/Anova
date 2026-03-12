@@ -47,28 +47,27 @@ class AnovaAlertManager @Inject constructor(
 
     // ── Cook-active persistent notification ────────────────────────────────────
 
-    fun updateCookNotification(currentTemp: Float?, targetTemp: Float?, timerMinutes: Int?, unitSymbol: String) {
-        val tempStr  = if (currentTemp != null) "%.1f%s".format(currentTemp, unitSymbol) else "– –"
+    fun buildCookNotification(currentTemp: Float?, targetTemp: Float?, timerMinutes: Int?, unitSymbol: String): android.app.Notification {
+        val tempStr   = if (currentTemp != null) "%.1f%s".format(currentTemp, unitSymbol) else "– –"
         val targetStr = if (targetTemp != null) " → %.1f%s".format(targetTemp, unitSymbol) else ""
-        val timerStr = if (timerMinutes != null) {
+        val timerStr  = if (timerMinutes != null) {
             val h = timerMinutes / 60; val m = timerMinutes % 60
             if (h > 0) "%dh %02dm remaining".format(h, m) else "%dm remaining".format(m)
         } else ""
-
-        val stopIntent  = broadcastIntent(ACTION_STOP_COOK, NOTIFICATION_ID_COOK_STATUS)
-        val addHrIntent = broadcastIntent(ACTION_ADD_HOUR,  NOTIFICATION_ID_COOK_STATUS + 1)
-
-        val n = NotificationCompat.Builder(context, AppConfig.NOTIFICATION_CHANNEL_COOK_STATUS)
+        return NotificationCompat.Builder(context, AppConfig.NOTIFICATION_CHANNEL_COOK_STATUS)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Anova running  $tempStr$targetStr")
             .setContentText(timerStr.ifBlank { "Cook in progress" })
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(tapIntent(NOTIFICATION_ID_COOK_STATUS))
-            .addAction(0, "Stop", stopIntent)
-            .addAction(0, "+1 hour", addHrIntent)
+            .addAction(0, "Stop", broadcastIntent(ACTION_STOP_COOK, NOTIFICATION_ID_COOK_STATUS))
+            .addAction(0, "+1 hour", broadcastIntent(ACTION_ADD_HOUR, NOTIFICATION_ID_COOK_STATUS + 1))
             .build()
-        nm.notify(NOTIFICATION_ID_COOK_STATUS, n)
+    }
+
+    fun updateCookNotification(currentTemp: Float?, targetTemp: Float?, timerMinutes: Int?, unitSymbol: String) {
+        nm.notify(NOTIFICATION_ID_COOK_STATUS, buildCookNotification(currentTemp, targetTemp, timerMinutes, unitSymbol))
     }
 
     fun cancelCookNotification() = nm.cancel(NOTIFICATION_ID_COOK_STATUS)

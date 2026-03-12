@@ -331,8 +331,8 @@ class AnovaRepository @Inject constructor(
             if (wasBelow && reachedNow) {
                 checkAlert(settings.alertTempTarget) {
                     alertManager.postEventAlert(
-                        "Target temperature reached",
-                        "%.1f%s — ready!".format(raw.currentTemp, raw.unit.symbol),
+                        "Target temp %.1f%s reached".format(target, raw.unit.symbol),
+                        "Water is up to temperature — cook timer is running",
                         AnovaAlertManager.NOTIFICATION_ID_TEMP_TARGET
                     )
                 }

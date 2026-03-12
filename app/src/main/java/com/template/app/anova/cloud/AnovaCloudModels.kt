@@ -41,9 +41,9 @@ data class WsCommandOnly(@SerializedName("command") val command: String?)
 
 /** Outbound command envelope. Server expects `command` (not `type`). */
 data class WsCommand(
-    @SerializedName("command") val command: String,
-    @SerializedName("id")      val id: String,
-    @SerializedName("payload") val payload: Map<String, Any?>
+    @SerializedName("command")   val command: String,
+    @SerializedName("requestId") val requestId: String,
+    @SerializedName("payload")   val payload: Map<String, Any?>
 )
 
 // EVENT_APC_WIFI_LIST

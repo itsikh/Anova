@@ -58,6 +58,7 @@ class AnovaCloudTransport @Inject constructor(
 
     private var webSocket: WebSocket? = null
     private var cookerId: String? = null
+    private var deviceType: String? = null
     private var cachedRawState: AnovaRawState? = null
     private var connectionTimeoutJob: Job? = null
 
@@ -135,6 +136,7 @@ class AnovaCloudTransport @Inject constructor(
         webSocket?.close(1000, "User disconnected")
         webSocket = null
         cookerId = null
+        deviceType = null
         cachedRawState = null
         _connectionState.value = ConnectionState.DISCONNECTED
         _deviceName.value = null
@@ -148,24 +150,37 @@ class AnovaCloudTransport @Inject constructor(
 
     override suspend fun startCook(): Boolean {
         val id = cookerId ?: return false
-        return sendCommand("CMD_APC_START", mapOf("cookerId" to id))
+        val type = deviceType ?: return false
+        // Use the last known target temp; fall back to 60°C if no state yet.
+        val target = cachedRawState?.targetTemp?.toDouble() ?: 60.0
+        val unit = if (cachedRawState?.unit == TempUnit.FAHRENHEIT) "F" else "C"
+        return sendCommand("CMD_APC_START", mapOf(
+            "cookerId" to id, "type" to type,
+            "targetTemperature" to target, "unit" to unit
+        ))
     }
 
     override suspend fun stopCook(): Boolean {
         val id = cookerId ?: return false
-        return sendCommand("CMD_APC_STOP", mapOf("cookerId" to id))
+        val type = deviceType ?: return false
+        return sendCommand("CMD_APC_STOP", mapOf("cookerId" to id, "type" to type))
     }
 
     override suspend fun updateCook(targetTemp: Float?, timerSeconds: Int?): Boolean {
         val id = cookerId ?: return false
+        val type = deviceType ?: return false
         var ok = true
-        // Each field is a separate command — server does not accept a combined update command.
         if (targetTemp != null) {
-            ok = sendCommand("CMD_APC_SET_TARGET_TEMP", mapOf("cookerId" to id, "targetTemp" to targetTemp)) && ok
+            val unit = if (cachedRawState?.unit == TempUnit.FAHRENHEIT) "F" else "C"
+            ok = sendCommand("CMD_APC_SET_TARGET_TEMP", mapOf(
+                "cookerId" to id, "type" to type,
+                "targetTemperature" to targetTemp.toDouble(), "unit" to unit
+            )) && ok
         }
         if (timerSeconds != null) {
-            // Server expects {"cookerId":..., "timer": <int_seconds>}
-            ok = sendCommand("CMD_APC_SET_TIMER", mapOf("cookerId" to id, "timer" to timerSeconds)) && ok
+            ok = sendCommand("CMD_APC_SET_TIMER", mapOf(
+                "cookerId" to id, "type" to type, "timer" to timerSeconds
+            )) && ok
         }
         return ok
     }
@@ -260,6 +275,7 @@ class AnovaCloudTransport @Inject constructor(
         val device = event.payload?.firstOrNull()
         if (device?.cookerId != null) {
             cookerId = device.cookerId
+            deviceType = device.type
             _deviceName.value = device.name ?: "Anova Precision Cooker"
             connectionTimeoutJob?.cancel()
             connectionTimeoutJob = null
@@ -329,7 +345,7 @@ class AnovaCloudTransport @Inject constructor(
 
     private fun sendCommand(command: String, payload: Map<String, Any?>): Boolean {
         val ws = webSocket ?: return false
-        val cmd = WsCommand(command = command, id = UUID.randomUUID().toString(), payload = payload)
+        val cmd = WsCommand(command = command, requestId = UUID.randomUUID().toString(), payload = payload)
         val json = gson.toJson(cmd)
         AppLogger.d(TAG, "Sending: ${json.take(120)}")
         return ws.send(json)

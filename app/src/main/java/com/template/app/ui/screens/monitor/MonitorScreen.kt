@@ -5,11 +5,15 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,11 +42,8 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,24 +65,51 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.template.app.anova.ActiveTransport
 import com.template.app.anova.AnovaStatus
 import com.template.app.anova.ConnectionMode
 import com.template.app.anova.ConnectionState
 import com.template.app.anova.ThresholdSettings
-import com.template.app.logging.AppLogger
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.Canvas
+import com.template.app.security.BiometricHelper
 import com.template.app.ui.theme.AnovaOrange
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.cos
+import kotlin.math.sin
+
+// ── Deep Charcoal design palette ─────────────────────────────────────────────
+private val DC_Bg          = Color(0xFF0F0F0F)
+private val DC_Surface     = Color(0xFF191919)
+private val DC_Track       = Color(0xFF1D1D1D)
+private val DC_ArcAmber    = Color(0xFFFF9500)
+private val DC_ArcRed      = Color(0xFFFF3300)
+private val DC_TipDot      = Color(0xFFFF5000)
+private val DC_TextPrimary = Color(0xFFEAEAEA)
+private val DC_TextDim     = Color(0xFF4A4A4A)
+private val DC_TextMuted   = Color(0xFF2A2A2A)
+private val DC_Orange      = Color(0xFFFF6600)
+private val DC_AlertBg     = Color(0x14FF6600)
+private val DC_AlertBorder = Color(0x33FF6600)
+private val DC_IconBg      = Color(0x0AFFFFFF)
+private val DC_IconBorder  = Color(0x0FFFFFFF)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +137,8 @@ fun MonitorScreen(
     var showConnectionSettings by remember { mutableStateOf(false) }
     var showTempEditDialog     by remember { mutableStateOf(false) }
     var showTimerEditDialog    by remember { mutableStateOf(false) }
+    var showDisconnectConfirm  by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     var googleSignedInAs       by remember { mutableStateOf<String?>(null) }
     var googleAuthSession      by remember { mutableStateOf<Pair<String, String>?>(null) }
     var isLoadingGoogleAuth    by remember { mutableStateOf(false) }
@@ -145,7 +175,6 @@ fun MonitorScreen(
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        // Seed auth status from persisted session on first composition
         val stored = vm.storedEmail
         if (stored != null && googleSignedInAs == null) googleSignedInAs = stored
     }
@@ -156,111 +185,199 @@ fun MonitorScreen(
     }
 
     val isConnected = state.connectionState == ConnectionState.CONNECTED
+    val alertActive = thresholds.minTempEnabled || thresholds.maxTempEnabled
+    val timerFinishEpochMs = state.timerMinutes?.let { System.currentTimeMillis() + it * 60_000L }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("anova", style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold, color = AnovaOrange, letterSpacing = 1.sp)
+                    Text(
+                        "anova",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = DC_Orange,
+                        letterSpacing = 0.5.sp
+                    )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DC_Bg),
                 actions = {
                     IconButton(onClick = { showThresholdDialog = true }) {
-                        val alertActive = thresholds.minTempEnabled || thresholds.maxTempEnabled
-                        Icon(
-                            if (alertActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
-                            "Alerts",
-                            tint = if (alertActive) AnovaOrange else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Box(
+                            Modifier
+                                .size(34.dp)
+                                .background(
+                                    if (alertActive) DC_AlertBg else DC_IconBg,
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (alertActive) DC_AlertBorder else DC_IconBorder,
+                                    RoundedCornerShape(10.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                if (alertActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
+                                "Alerts",
+                                tint = if (alertActive) DC_Orange else DC_TextDim,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                     IconButton(onClick = onOpenSchedule) {
-                        Icon(Icons.Default.DateRange, "Schedule", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Default.DateRange, "Schedule", tint = DC_TextDim)
                     }
                     IconButton(onClick = onOpenHistory) {
-                        Icon(Icons.Default.History, "History", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Default.History, "History", tint = DC_TextDim)
                     }
                     IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, "Settings", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Default.Settings, "Settings", tint = DC_TextDim)
                     }
                 }
             )
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = DC_Bg
     ) { innerPadding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(innerPadding)
-                .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Status row
-            DeviceStatusRow(state.connectionState, state.status, active, state.deviceName)
+            // Status + device name
+            DarkStatusRow(state.connectionState, state.status, active, state.deviceName)
 
-            // Main readout card
-            ReadoutCard(
-                temp = state.currentTemp,
+            Spacer(Modifier.height(4.dp))
+
+            // Thermostat ring
+            ThermostatRing(
+                currentTemp = state.currentTemp,
+                targetTemp = state.targetTemp,
+                unit = state.unit.symbol
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            // Info row: Target | Remaining | Finishes at
+            InfoRow(
                 targetTemp = state.targetTemp,
                 unit = state.unit.symbol,
                 timerMinutes = state.timerMinutes,
-                status = state.status,
-                connectionState = state.connectionState,
-                thresholds = thresholds,
+                finishEpoch = timerFinishEpochMs,
+                isConnected = isConnected,
                 onTempClick = { if (isConnected) showTempEditDialog = true },
                 onTimerClick = { if (isConnected) showTimerEditDialog = true }
             )
 
-            // Cook control (Start/Stop) — only when connected
-            if (isConnected) {
-                CookControlButton(
-                    status = state.status,
-                    onStart = { vm.startCook() },
-                    onStop = { vm.stopCook() }
+            Spacer(Modifier.height(6.dp))
+
+            // Times row: finish date · updated time
+            TimesRow(finishEpoch = timerFinishEpochMs, lastUpdated = state.lastUpdated)
+
+            Spacer(Modifier.height(12.dp))
+
+            // Alert strip
+            if (thresholds.minTempEnabled && thresholds.minTemp > 0f) {
+                AlertStrip(
+                    minTemp = thresholds.minTemp,
+                    unit = state.unit.symbol,
+                    isAuto = thresholds.isAutoMin
                 )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // Threshold breach warning
+            val minV = thresholds.minTempEnabled && state.currentTemp != null && state.currentTemp!! <= thresholds.minTemp
+            val maxV = thresholds.maxTempEnabled && state.currentTemp != null && state.currentTemp!! >= thresholds.maxTemp
+            if (minV || maxV) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                    Text(
+                        buildString {
+                            if (minV) append("Below min %.1f°".format(thresholds.minTemp))
+                            if (minV && maxV) append("  ·  ")
+                            if (maxV) append("Above max %.1f°".format(thresholds.maxTemp))
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // Cook control + presets — only when connected
+            if (isConnected) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CookButton(
+                        status = state.status,
+                        onStart = { vm.startCook() },
+                        onStop = { vm.stopCook() }
+                    )
+                    PresetsButton(onClick = { /* TODO: open presets sheet */ })
+                }
+                Spacer(Modifier.height(10.dp))
             }
 
             // Connect / Disconnect
-            ActionButton(
-                connectionState = state.connectionState,
-                onConnect = ::onConnectClicked,
-                onDisconnect = { vm.disconnect() }
-            )
-
-            TextButton(onClick = { showConnectionSettings = true }) {
-                Text("Configure connection", style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                ActionButton(
+                    connectionState = state.connectionState,
+                    onConnect = ::onConnectClicked,
+                    onDisconnect = { showDisconnectConfirm = true }
+                )
             }
 
-            // Auth status — show signed-in email or "Not signed in"
+            Spacer(Modifier.height(4.dp))
+
+            TextButton(onClick = { showConnectionSettings = true }) {
+                Text(
+                    "Configure connection",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = DC_TextDim
+                )
+            }
+
             Text(
-                if (googleSignedInAs != null) "Signed in as: $googleSignedInAs"
-                else "Not signed in",
+                if (googleSignedInAs != null) "Signed in as: $googleSignedInAs" else "Not signed in",
                 style = MaterialTheme.typography.labelSmall,
-                color = if (googleSignedInAs != null)
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                else
-                    MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                color = if (googleSignedInAs != null) DC_TextMuted else MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center
             )
 
             if (state.connectionError != null) {
-                Text(state.connectionError!!, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth())
+                Text(
+                    state.connectionError!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                )
             }
 
-            if (state.lastUpdated > 0L) {
-                Text("Updated ${formatTime(state.lastUpdated)}", style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-            }
+            Spacer(Modifier.height(32.dp))
         }
     }
 
     // ── Dialogs ───────────────────────────────────────────────────────────────
 
     if (showThresholdDialog) {
-        ThresholdDialog(current = thresholds, unitSymbol = state.unit.symbol,
-            onConfirm = { vm.updateThresholds(it) }, onDismiss = { showThresholdDialog = false })
+        ThresholdDialog(
+            current = thresholds, unitSymbol = state.unit.symbol,
+            onConfirm = { vm.updateThresholds(it) }, onDismiss = { showThresholdDialog = false }
+        )
     }
 
     if (showConnectionSettings) {
@@ -288,10 +405,8 @@ fun MonitorScreen(
 
     if (showTempEditDialog) {
         TempEditDialog(
-            currentTarget = state.targetTemp,
-            unitSymbol = state.unit.symbol,
-            onConfirm = { vm.updateTemp(it) },
-            onDismiss = { showTempEditDialog = false }
+            currentTarget = state.targetTemp, unitSymbol = state.unit.symbol,
+            onConfirm = { vm.updateTemp(it) }, onDismiss = { showTempEditDialog = false }
         )
     }
 
@@ -304,192 +419,386 @@ fun MonitorScreen(
     }
 
     if (isLoadingGoogleAuth) {
-        AlertDialog(onDismissRequest = {},
+        AlertDialog(
+            onDismissRequest = {},
             title = { Text("Signing in…") },
             text = { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = AnovaOrange) } },
-            confirmButton = {})
+            confirmButton = {}
+        )
     }
 
     googleAuthError?.let { err ->
-        AlertDialog(onDismissRequest = { googleAuthError = null },
+        AlertDialog(
+            onDismissRequest = { googleAuthError = null },
             title = { Text("Sign-in failed") }, text = { Text(err) },
-            confirmButton = { TextButton(onClick = { googleAuthError = null }) { Text("OK") } })
+            confirmButton = { TextButton(onClick = { googleAuthError = null }) { Text("OK") } }
+        )
     }
 
     controlError?.let { err ->
-        AlertDialog(onDismissRequest = { vm.dismissControlError() },
+        AlertDialog(
+            onDismissRequest = { vm.dismissControlError() },
             title = { Text("Error") }, text = { Text(err) },
-            confirmButton = { TextButton(onClick = { vm.dismissControlError() }) { Text("OK") } })
+            confirmButton = { TextButton(onClick = { vm.dismissControlError() }) { Text("OK") } }
+        )
     }
 
     googleAuthSession?.let { (authUri, sessionId) ->
-        GoogleSignInWebViewDialog(authUri = authUri, sessionId = sessionId,
+        GoogleSignInWebViewDialog(
+            authUri = authUri, sessionId = sessionId,
             onAuthRedirectIntercepted = ::onGoogleAuthRedirect,
-            onDismiss = { googleAuthSession = null })
+            onDismiss = { googleAuthSession = null }
+        )
+    }
+
+    if (showDisconnectConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDisconnectConfirm = false },
+            title = { Text("Disconnect") },
+            text = { Text("Disconnect from the device?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDisconnectConfirm = false
+                    BiometricHelper.authenticate(
+                        activity = context as FragmentActivity,
+                        title = "Confirm disconnect",
+                        subtitle = "Authenticate to disconnect from the device",
+                        onSuccess = { vm.disconnect() },
+                        onError = {}
+                    )
+                }) { Text("Disconnect", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { showDisconnectConfirm = false }) { Text("Cancel") } }
+        )
     }
 }
 
-// ── Cook control button ────────────────────────────────────────────────────────
+// ── Thermostat ring ───────────────────────────────────────────────────────────
 
 @Composable
-private fun CookControlButton(status: AnovaStatus, onStart: () -> Unit, onStop: () -> Unit) {
-    when (status) {
-        AnovaStatus.RUNNING -> Button(
-            onClick = onStop,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-        ) { Text("Stop Cook", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) }
+private fun ThermostatRing(currentTemp: Float?, targetTemp: Float?, unit: String) {
+    val fillFraction = remember(currentTemp, targetTemp) {
+        if (currentTemp != null && targetTemp != null && targetTemp > 0f)
+            (currentTemp / targetTemp).coerceIn(0f, 1f)
+        else 0f
+    }
+    val animatedFill by animateFloatAsState(
+        targetValue = fillFraction,
+        animationSpec = tween(900, easing = FastOutSlowInEasing),
+        label = "arcFill"
+    )
+    val arcColor = lerp(DC_ArcAmber, DC_ArcRed, animatedFill)
 
-        AnovaStatus.STOPPED, AnovaStatus.UNKNOWN -> Button(
-            onClick = onStart,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50), contentColor = Color.White)
-        ) { Text("Start Cook", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) }
+    Box(
+        modifier = Modifier.size(252.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val strokeDp = 14.dp
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokePx = strokeDp.toPx()
+            val radius   = (size.minDimension - strokePx) / 2f
+            val topLeft  = Offset((size.width - radius * 2) / 2f, (size.height - radius * 2) / 2f)
+            val arcSize  = Size(radius * 2, radius * 2)
+            val center   = Offset(size.width / 2f, size.height / 2f)
+
+            // Track
+            drawArc(
+                color      = DC_Track,
+                startAngle = 140f,
+                sweepAngle = 280f,
+                useCenter  = false,
+                topLeft    = topLeft,
+                size       = arcSize,
+                style      = Stroke(width = strokePx, cap = StrokeCap.Round)
+            )
+
+            // Animated fill
+            val fillSweep = animatedFill * 280f
+            if (fillSweep > 1f) {
+                drawArc(
+                    color      = arcColor,
+                    startAngle = 140f,
+                    sweepAngle = fillSweep,
+                    useCenter  = false,
+                    topLeft    = topLeft,
+                    size       = arcSize,
+                    style      = Stroke(width = strokePx, cap = StrokeCap.Round)
+                )
+                // Glowing tip dot
+                val tipAngleDeg = 140f + fillSweep
+                val tipRad      = Math.toRadians(tipAngleDeg.toDouble())
+                val tipX        = center.x + radius * cos(tipRad).toFloat()
+                val tipY        = center.y + radius * sin(tipRad).toFloat()
+                drawCircle(
+                    color  = DC_TipDot,
+                    radius = strokePx / 2f + 2.dp.toPx(),
+                    center = Offset(tipX, tipY)
+                )
+            }
+        }
+
+        // Center text
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            AnimatedContent(
+                targetState = currentTemp,
+                transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) },
+                label = "ringTemp"
+            ) { t ->
+                Text(
+                    text       = if (t != null) "%.1f".format(t) else "–",
+                    fontSize   = 62.sp,
+                    fontWeight = FontWeight.Bold,
+                    color      = DC_TextPrimary,
+                    letterSpacing = (-2).sp
+                )
+            }
+            Text("°$unit", fontSize = 15.sp, fontWeight = FontWeight.Light, color = DC_TextDim)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "CURRENT",
+                fontSize      = 9.sp,
+                letterSpacing = 2.sp,
+                color         = DC_TextMuted,
+                fontWeight    = FontWeight.Medium
+            )
+        }
     }
 }
 
-// ── Device status row ─────────────────────────────────────────────────────────
+// ── Status row ────────────────────────────────────────────────────────────────
 
 @Composable
-private fun DeviceStatusRow(
-    connectionState: ConnectionState, status: AnovaStatus,
-    activeTransport: ActiveTransport, deviceName: String?
+private fun DarkStatusRow(
+    connectionState: ConnectionState,
+    status: AnovaStatus,
+    activeTransport: ActiveTransport,
+    deviceName: String?
+) {
+    val dotColor = when {
+        connectionState != ConnectionState.CONNECTED -> Color(0xFF333333)
+        status == AnovaStatus.RUNNING               -> Color(0xFF4CAF50)
+        status == AnovaStatus.STOPPED               -> Color(0xFFFF9500)
+        else                                        -> Color(0xFF444444)
+    }
+    val dotGlow = when {
+        connectionState == ConnectionState.CONNECTED && status == AnovaStatus.RUNNING -> Color(0xFF4CAF50)
+        connectionState == ConnectionState.CONNECTED && status == AnovaStatus.STOPPED -> Color(0xFFFF9500)
+        else -> Color.Transparent
+    }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 2.dp)
+        ) {
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(dotColor)
+            )
+            Text(
+                buildString {
+                    append(dcStatusLabel(status, connectionState))
+                    if (connectionState == ConnectionState.CONNECTED && activeTransport != ActiveTransport.NONE) {
+                        append(" · ")
+                        append(activeTransport.displayName)
+                    }
+                },
+                style     = MaterialTheme.typography.labelSmall,
+                color     = DC_TextDim,
+                fontWeight = FontWeight.Medium
+            )
+        }
+        if (deviceName != null && connectionState == ConnectionState.CONNECTED) {
+            Text(
+                deviceName,
+                style  = MaterialTheme.typography.labelSmall,
+                color  = DC_TextMuted,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+// ── Info row (Target | Remaining | Finishes at) ───────────────────────────────
+
+@Composable
+private fun InfoRow(
+    targetTemp: Float?, unit: String, timerMinutes: Int?, finishEpoch: Long?,
+    isConnected: Boolean, onTempClick: () -> Unit, onTimerClick: () -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(statusDotColor(status, connectionState)))
-        Text(statusLabel(status, connectionState), style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (connectionState == ConnectionState.CONNECTED && activeTransport != ActiveTransport.NONE) {
-            Text("·", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-            Text(activeTransport.displayName, style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-        }
-    }
-    if (deviceName != null && connectionState == ConnectionState.CONNECTED) {
-        Text(deviceName, style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-            textAlign = TextAlign.Center)
+        // Target
+        InfoCell(
+            label    = "TARGET",
+            value    = if (targetTemp != null) "%.1f°%s".format(targetTemp, unit) else "–",
+            isAccent = targetTemp != null,
+            onClick  = if (isConnected && targetTemp != null) onTempClick else null
+        )
+
+        Box(Modifier.width(1.dp).height(30.dp).background(DC_Track))
+
+        // Remaining
+        InfoCell(
+            label    = "REMAINING",
+            value    = formatTimer(timerMinutes),
+            isAccent = false,
+            onClick  = if (isConnected) onTimerClick else null
+        )
+
+        Box(Modifier.width(1.dp).height(30.dp).background(DC_Track))
+
+        // Finishes at
+        InfoCell(
+            label    = "FINISHES AT",
+            value    = if (finishEpoch != null) formatHHmm(finishEpoch) else "–",
+            isAccent = false,
+            onClick  = null
+        )
     }
 }
 
-// ── Readout card ──────────────────────────────────────────────────────────────
+@Composable
+private fun InfoCell(label: String, value: String, isAccent: Boolean, onClick: (() -> Unit)?) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            label,
+            fontSize      = 9.sp,
+            letterSpacing = 1.2.sp,
+            fontWeight    = FontWeight.SemiBold,
+            color         = DC_TextMuted
+        )
+        Spacer(Modifier.height(4.dp))
+        if (onClick != null) {
+            TextButton(
+                onClick = onClick,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+            ) {
+                Text(
+                    value,
+                    fontSize   = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color      = if (isAccent) DC_Orange else DC_TextDim
+                )
+            }
+        } else {
+            Text(
+                value,
+                fontSize   = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                color      = if (isAccent) DC_Orange else DC_TextDim
+            )
+        }
+    }
+}
+
+// ── Times row ─────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ReadoutCard(
-    temp: Float?, targetTemp: Float?, unit: String, timerMinutes: Int?,
-    status: AnovaStatus, connectionState: ConnectionState, thresholds: ThresholdSettings,
-    onTempClick: () -> Unit, onTimerClick: () -> Unit
-) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+private fun TimesRow(finishEpoch: Long?, lastUpdated: Long) {
+    if (finishEpoch == null && lastUpdated <= 0L) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            AnimatedContent(targetState = temp,
-                transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) },
-                label = "temp") { t ->
-                if (t != null) {
-                    Text("%.1f%s".format(t, unit), fontSize = 80.sp, fontWeight = FontWeight.Bold,
-                        color = AnovaOrange, textAlign = TextAlign.Center)
-                } else {
-                    Text("– –  $unit", fontSize = 72.sp, fontWeight = FontWeight.Light,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
-                        textAlign = TextAlign.Center)
-                }
-            }
-
-            // Target temp — tappable when connected
-            if (targetTemp != null && connectionState == ConnectionState.CONNECTED) {
-                TextButton(onClick = onTempClick, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                    Text("Target  %.1f%s".format(targetTemp, unit),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                Text("Current Temperature", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-            }
-
-            // Min alert indicator — always visible when min alert is enabled
-            if (thresholds.minTempEnabled && thresholds.minTemp > 0f) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        Icons.Default.NotificationsNone, null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.size(12.dp)
-                    )
-                    Text(
-                        "Alert if below %.1f%s%s".format(
-                            thresholds.minTemp, unit,
-                            if (thresholds.isAutoMin) " (auto)" else ""
-                        ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // Timer — tappable when connected
-            if (connectionState == ConnectionState.CONNECTED) {
-                TextButton(onClick = onTimerClick, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                    Icon(Icons.Default.Timer, null,
-                        tint = if (timerMinutes != null) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                               else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                        modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(formatTimer(timerMinutes),
-                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium,
-                        color = if (timerMinutes != null) MaterialTheme.colorScheme.onSurface
-                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
-                    if (timerMinutes != null) {
-                        Spacer(Modifier.width(4.dp))
-                        Text("remaining", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    Icon(Icons.Default.Timer, null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                        modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(formatTimer(timerMinutes), style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
-                }
-            }
-
-            // Threshold alerts
-            val minV = thresholds.minTempEnabled && temp != null && temp <= thresholds.minTemp
-            val maxV = thresholds.maxTempEnabled && temp != null && temp >= thresholds.maxTemp
-            if (minV || maxV) {
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                    Text(buildString {
-                        if (minV) append("Below min %.1f°".format(thresholds.minTemp))
-                        if (minV && maxV) append("  ·  ")
-                        if (maxV) append("Above max %.1f°".format(thresholds.maxTemp))
-                    }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-                }
-            }
+        if (finishEpoch != null) {
+            Text(
+                "Finishes ${formatFinishDate(finishEpoch)}",
+                style      = MaterialTheme.typography.labelSmall,
+                color      = DC_TextDim,
+                fontWeight = FontWeight.SemiBold
+            )
         }
+        if (finishEpoch != null && lastUpdated > 0L) {
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.size(3.dp).clip(CircleShape).background(DC_TextMuted))
+            Spacer(Modifier.width(6.dp))
+        }
+        if (lastUpdated > 0L) {
+            Text(
+                "Updated ${formatHHmm(lastUpdated)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = DC_TextMuted
+            )
+        }
+    }
+}
+
+// ── Alert strip ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .background(DC_AlertBg, RoundedCornerShape(14.dp))
+            .border(1.dp, DC_AlertBorder, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(Icons.Default.NotificationsActive, null, tint = DC_Orange, modifier = Modifier.size(16.dp))
+        Text(
+            "Alert below %.1f°%s%s".format(minTemp, unit, if (isAuto) " (auto)" else ""),
+            style      = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color      = DC_Orange
+        )
+    }
+}
+
+// ── Cook button ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun CookButton(status: AnovaStatus, onStart: () -> Unit, onStop: () -> Unit) {
+    val isRunning = status == AnovaStatus.RUNNING
+    Button(
+        onClick = if (isRunning) onStop else onStart,
+        modifier = Modifier.fillMaxWidth().height(56.dp),
+        shape  = RoundedCornerShape(18.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isRunning) Color(0xFFD32F2F) else Color(0xFF2E7D32),
+            contentColor   = Color.White
+        )
+    ) {
+        Text(
+            if (isRunning) "Stop Cook" else "Start Cook",
+            style      = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.3.sp
+        )
+    }
+}
+
+// ── Presets button ────────────────────────────────────────────────────────────
+
+@Composable
+private fun PresetsButton(onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+        shape  = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, DC_AlertBorder),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = DC_Orange)
+    ) {
+        Icon(Icons.Default.Tune, null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(7.dp))
+        Text("Presets", fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -501,26 +810,31 @@ private fun ActionButton(connectionState: ConnectionState, onConnect: () -> Unit
         ConnectionState.DISCONNECTED -> Button(
             onClick = onConnect,
             modifier = Modifier.fillMaxWidth().height(56.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AnovaOrange, contentColor = Color.White)
+            shape  = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = DC_Orange, contentColor = Color.White)
         ) { Text("Connect", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) }
 
         ConnectionState.SCANNING, ConnectionState.CONNECTING -> OutlinedButton(
-            onClick = onDisconnect,
+            onClick  = onDisconnect,
             modifier = Modifier.fillMaxWidth().height(56.dp),
-            shape = RoundedCornerShape(16.dp)
+            shape    = RoundedCornerShape(16.dp),
+            border   = BorderStroke(1.dp, DC_Track),
+            colors   = ButtonDefaults.outlinedButtonColors(contentColor = DC_TextDim)
         ) {
-            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = AnovaOrange)
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = DC_Orange)
             Spacer(Modifier.width(10.dp))
-            Text(if (connectionState == ConnectionState.SCANNING) "Scanning…" else "Connecting…",
-                style = MaterialTheme.typography.labelLarge)
+            Text(
+                if (connectionState == ConnectionState.SCANNING) "Scanning…" else "Connecting…",
+                style = MaterialTheme.typography.labelLarge
+            )
         }
 
         ConnectionState.CONNECTED -> OutlinedButton(
-            onClick = onDisconnect,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+            onClick  = onDisconnect,
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape    = RoundedCornerShape(16.dp),
+            border   = BorderStroke(1.dp, DC_Track),
+            colors   = ButtonDefaults.outlinedButtonColors(contentColor = DC_TextDim)
         ) { Text("Disconnect", style = MaterialTheme.typography.labelLarge) }
     }
 }
@@ -543,9 +857,7 @@ private fun TempEditDialog(currentTarget: Float?, unitSymbol: String, onConfirm:
             )
         },
         confirmButton = {
-            TextButton(onClick = {
-                text.toFloatOrNull()?.let { onConfirm(it); onDismiss() }
-            }) { Text("Set") }
+            TextButton(onClick = { text.toFloatOrNull()?.let { onConfirm(it); onDismiss() } }) { Text("Set") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -595,21 +907,7 @@ private fun formatTimer(timerMinutes: Int?): String {
     return if (h > 0) "%dh %02dm".format(h, m) else "%dm".format(m)
 }
 
-private val ActiveTransport.displayName get() = when (this) {
-    ActiveTransport.BLUETOOTH  -> "Bluetooth"
-    ActiveTransport.LOCAL_WIFI -> "Local Wi-Fi"
-    ActiveTransport.CLOUD      -> "Cloud"
-    ActiveTransport.NONE       -> ""
-}
-
-private fun statusDotColor(status: AnovaStatus, cs: ConnectionState) = when {
-    cs != ConnectionState.CONNECTED -> Color(0xFFAAAAAA)
-    status == AnovaStatus.RUNNING   -> Color(0xFF4CAF50)
-    status == AnovaStatus.STOPPED   -> Color(0xFFFF9800)
-    else                            -> Color(0xFFAAAAAA)
-}
-
-private fun statusLabel(status: AnovaStatus, cs: ConnectionState) = when {
+private fun dcStatusLabel(status: AnovaStatus, cs: ConnectionState) = when {
     cs == ConnectionState.DISCONNECTED -> "Not connected"
     cs == ConnectionState.SCANNING     -> "Scanning…"
     cs == ConnectionState.CONNECTING   -> "Connecting…"
@@ -618,5 +916,23 @@ private fun statusLabel(status: AnovaStatus, cs: ConnectionState) = when {
     else                               -> "Connected"
 }
 
-private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-private fun formatTime(millis: Long) = timeFmt.format(Date(millis))
+private val ActiveTransport.displayName get() = when (this) {
+    ActiveTransport.BLUETOOTH  -> "Bluetooth"
+    ActiveTransport.LOCAL_WIFI -> "Wi-Fi"
+    ActiveTransport.CLOUD      -> "Cloud"
+    ActiveTransport.NONE       -> ""
+}
+
+private val hhmm       = SimpleDateFormat("HH:mm", Locale.getDefault())
+private val finishFmt  = SimpleDateFormat("d MMM · HH:mm", Locale.getDefault())
+private fun formatHHmm(millis: Long): String = hhmm.format(Date(millis))
+private fun formatFinishDate(millis: Long): String {
+    val today = Calendar.getInstance()
+    val finish = Calendar.getInstance().apply { timeInMillis = millis }
+    return if (today.get(Calendar.YEAR) == finish.get(Calendar.YEAR) &&
+               today.get(Calendar.DAY_OF_YEAR) == finish.get(Calendar.DAY_OF_YEAR)) {
+        "today · ${formatHHmm(millis)}"
+    } else {
+        finishFmt.format(Date(millis))
+    }
+}
