@@ -158,46 +158,43 @@ class AnovaFirebaseAuth @Inject constructor(
 
     // ── Google OAuth ──────────────────────────────────────────────────────────
 
+    /**
+     * Builds a Google OAuth URL using the OpenID Connect implicit flow
+     * (response_type=id_token). Google returns the id_token directly in the
+     * redirect URL fragment — no server-side code exchange needed, no client
+     * secret required.
+     *
+     * Returns Pair(authUrl, nonce).
+     */
     fun createGoogleAuthUri(): Pair<String, String> {
-        val sessionId = buildSessionId()
+        val nonce = buildSessionId()
         val authUri = "https://accounts.google.com/o/oauth2/v2/auth" +
             "?client_id=${AnovaCloudConfig.FIREBASE_WEB_CLIENT_ID}" +
-            "&response_type=code" +
+            "&response_type=id_token" +
             "&scope=openid%20email%20profile" +
             "&redirect_uri=${AnovaCloudConfig.FIREBASE_AUTH_HANDLER_URL}" +
-            "&state=$sessionId"
-        return Pair(authUri, sessionId)
+            "&nonce=$nonce"
+        return Pair(authUri, nonce)
     }
 
-    suspend fun signInWithGoogleRedirectUrl(redirectUrl: String, sessionId: String): String? =
+    /**
+     * Extracts the id_token from the redirect URL fragment (placed there by
+     * the implicit flow) and delegates to [signInWithGoogleIdToken].
+     */
+    suspend fun signInWithGoogleRedirectUrl(redirectUrl: String, nonce: String): String? =
         withContext(Dispatchers.IO) {
             lastSignInError = null
-            try {
-                val body = """{"requestUri":"$redirectUrl","sessionId":"$sessionId","returnSecureToken":true,"returnIdpCredential":true}"""
-                val request = Request.Builder()
-                    .url(AnovaCloudConfig.FIREBASE_SIGN_IN_WITH_IDP_URL)
-                    .post(body.toRequestBody(JSON_TYPE))
-                    .build()
-                val resp = client.newCall(request).execute()
-                if (!resp.isSuccessful) {
-                    val err = resp.body?.string() ?: ""
-                    AppLogger.e(TAG, "signInWithIdp failed ${resp.code}: ${err.take(200)}")
-                    lastSignInError = "Google sign-in failed (HTTP ${resp.code})."
-                    return@withContext null
-                }
-                val parsed = gson.fromJson(resp.body?.string(), FirebaseIdpResponse::class.java)
-                val expiresAt = System.currentTimeMillis() + (parsed.expiresIn?.toLongOrNull() ?: 3600L) * 1000
-                cached = CachedToken(parsed.idToken, parsed.refreshToken, expiresAt)
-                persistRefreshToken(parsed.refreshToken)
-                if (parsed.email != null) secureKeyManager.saveKey(KEY_AUTH_EMAIL, parsed.email)
-                exchangeForAnovaJwt(parsed.idToken)
-                AppLogger.i(TAG, "Google redirect sign-in OK")
-                parsed.idToken
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "Google redirect sign-in error: ${e.message}")
-                lastSignInError = "Google sign-in failed: ${e.message}"
-                null
+            val fragment = redirectUrl.substringAfter('#', "")
+            val idToken = fragment.split('&')
+                .firstOrNull { it.startsWith("id_token=") }
+                ?.removePrefix("id_token=")
+            if (idToken.isNullOrBlank()) {
+                AppLogger.e(TAG, "No id_token in redirect fragment: ${redirectUrl.take(120)}")
+                lastSignInError = "Google sign-in failed: no token in response."
+                return@withContext null
             }
+            AppLogger.i(TAG, "Extracted id_token from redirect fragment — signing in…")
+            signInWithGoogleIdToken(idToken)
         }
 
     suspend fun signInWithGoogleIdToken(googleIdToken: String): String? = withContext(Dispatchers.IO) {
