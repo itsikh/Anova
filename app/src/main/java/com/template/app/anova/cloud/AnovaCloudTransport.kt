@@ -24,7 +24,6 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -35,8 +34,10 @@ class AnovaCloudTransport @Inject constructor(
     private val auth: AnovaFirebaseAuth
 ) : AnovaTransport {
 
+    // No pingInterval — the Anova server does not respond to WebSocket pings,
+    // causing OkHttp to close the connection after every ping timeout.
+    // Application-level keepalive is handled by CMD_APC_REQUEST_DEVICE_STATUS polls.
     private val client = OkHttpClient.Builder()
-        .pingInterval(30, TimeUnit.SECONDS)
         .build()
     private val gson = Gson()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
