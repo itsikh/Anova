@@ -36,9 +36,14 @@ class AnovaAlertManager @Inject constructor(
         const val ACTION_STOP_COOK  = "com.template.app.ACTION_STOP_COOK"
         const val ACTION_ADD_HOUR   = "com.template.app.ACTION_ADD_HOUR"
 
-        /** AudioAttributes used for both alert channels — bypasses DND and hardware silent. */
+        /**
+         * AudioAttributes for alert channels. USAGE_NOTIFICATION_RINGTONE lets the channel
+         * use any custom URI the user picks (USAGE_ALARM causes Samsung and some other OEMs
+         * to override the channel sound with the system alarm regardless of what is set).
+         * DND bypass is handled separately via NotificationChannel.setBypassDnd(true).
+         */
         private val ALARM_AUDIO = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
     }
@@ -110,6 +115,11 @@ class AnovaAlertManager @Inject constructor(
             .setAutoCancel(true)
             .build()
         nm.notify(notificationId, n)
+    }
+
+    fun cancelTempAlerts() {
+        nm.cancel(NOTIFICATION_ID_TEMP_MIN)
+        nm.cancel(NOTIFICATION_ID_TEMP_MAX)
     }
 
     // ── Channel management ────────────────────────────────────────────────────

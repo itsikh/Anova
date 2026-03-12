@@ -56,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -88,6 +89,7 @@ import androidx.compose.foundation.Canvas
 import com.template.app.presets.PresetsSheet
 import com.template.app.security.BiometricHelper
 import com.template.app.ui.theme.AnovaOrange
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -129,6 +131,7 @@ fun MonitorScreen(
     val scannedIp      by vm.scannedIp.collectAsState()
     val controlError         by vm.controlError.collectAsState()
     val cookCommandPending   by vm.cookCommandPending.collectAsState()
+    val activeAlerts         by vm.activeAlerts.collectAsState()
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -380,6 +383,13 @@ fun MonitorScreen(
         ThresholdDialog(
             current = thresholds, unitSymbol = state.unit.symbol,
             onConfirm = { vm.updateThresholds(it) }, onDismiss = { showThresholdDialog = false }
+        )
+    }
+
+    if (activeAlerts.isNotEmpty()) {
+        ActiveAlertDialog(
+            alerts = activeAlerts,
+            onAcknowledge = { vm.acknowledgeAlerts() }
         )
     }
 
@@ -646,6 +656,14 @@ private fun InfoRow(
     targetTemp: Float?, unit: String, timerMinutes: Int?, lastUpdated: Long,
     isConnected: Boolean, onTempClick: () -> Unit, onTimerClick: () -> Unit
 ) {
+    // Refresh current time every 30 s so the lag counter stays accurate without polling
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) { delay(30_000L); nowMs = System.currentTimeMillis() }
+    }
+    val lagMin = if (lastUpdated > 0L) ((nowMs - lastUpdated) / 60_000L).toInt().coerceAtLeast(0) else -1
+    val updatedValue = if (lastUpdated > 0L) "${formatHHmm(lastUpdated)} ($lagMin)" else "–"
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -676,7 +694,7 @@ private fun InfoRow(
         // Updated
         InfoCell(
             label    = "UPDATED",
-            value    = if (lastUpdated > 0L) formatHHmm(lastUpdated) else "–",
+            value    = updatedValue,
             isAccent = false,
             onClick  = null
         )
@@ -721,6 +739,31 @@ private fun InfoCell(label: String, value: String, isAccent: Boolean, onClick: (
             }
         }
     }
+}
+
+// ── Active alert popup ────────────────────────────────────────────────────────
+
+@Composable
+private fun ActiveAlertDialog(alerts: List<ActiveAlert>, onAcknowledge: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = { /* must acknowledge explicitly */ },
+        title = { Text("⚠ Active Alert") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                alerts.forEach { alert -> Text(alert.message) }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "The alert will keep firing every 2 minutes while the condition is active.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onAcknowledge) { Text("Acknowledge") }
+        },
+        dismissButton = null
+    )
 }
 
 // ── Alert strip ───────────────────────────────────────────────────────────────
