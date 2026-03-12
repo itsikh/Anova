@@ -92,9 +92,9 @@ Common issues and how to fix them:
 Constraints: minimal changes only. Do not remove a live lock. All strings in English."
 
     log "Calling Claude to diagnose and fix..."
-    local fix_file
     fix_file=$(mktemp)
     printf '%s' "$fix_prompt" > "$fix_file"
+    unset CLAUDECODE
     claude --dangerously-skip-permissions --print < "$fix_file" 2>&1
     claude_exit=$?
     rm -f "$fix_file"

@@ -267,6 +267,8 @@ attempt_fix() {
     prompt_file=$(mktemp)
     printf '%s' "$prompt" > "$prompt_file"
     # Pass prompt via stdin to avoid ARG_MAX limits and reduce shell memory pressure
+    # Unset CLAUDECODE so nested invocations are allowed when called from within a Claude session
+    unset CLAUDECODE
     claude --dangerously-skip-permissions --print < "$prompt_file" 2>&1 | tee -a "$task_log" "$claude_tmp"
     claude_exit=${PIPESTATUS[0]}
     local claude_output
