@@ -26,6 +26,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
+enum class AlertType { MIN, MAX }
+data class ActiveAlert(val message: String, val type: AlertType)
+
 @HiltViewModel
 class AnovaViewModel @Inject constructor(
     private val repository: AnovaRepository,
@@ -86,11 +89,16 @@ class AnovaViewModel @Inject constructor(
     val anovaJwtExpiryMs: Long get() = firebaseAuth.anovaJwtExpiryMs
     val storedEmail: String?   get() = firebaseAuth.storedEmail
 
-    private var minAlertFired = false
-    private var maxAlertFired = false
+    // 0 = alert not active. >0 = System.currentTimeMillis() of last notification fire.
+    private var lastMinAlertMs = 0L
+    private var lastMaxAlertMs = 0L
     // True once the device has reached its target temp during the current cook.
     // Min alert only fires after this point — prevents false alerts while heating up.
     private var hasReachedTarget = false
+
+    /** Alerts currently active (condition still met, not yet acknowledged by user). */
+    private val _activeAlerts = MutableStateFlow<List<ActiveAlert>>(emptyList())
+    val activeAlerts: StateFlow<List<ActiveAlert>> = _activeAlerts.asStateFlow()
 
     init {
         // Load persisted thresholds from DataStore
@@ -130,7 +138,7 @@ class AnovaViewModel @Inject constructor(
                         )
                     }
                     hasReachedTarget = false
-                    minAlertFired = false
+                    lastMinAlertMs = 0L
                 }
                 checkThresholds(state)
             }
@@ -233,10 +241,18 @@ class AnovaViewModel @Inject constructor(
 
     // ── Thresholds ────────────────────────────────────────────────────────────
 
+    fun acknowledgeAlerts() {
+        _activeAlerts.value = emptyList()
+        lastMinAlertMs = 0L
+        lastMaxAlertMs = 0L
+        alertManager.cancelTempAlerts()
+    }
+
     fun updateThresholds(t: ThresholdSettings) {
         _thresholds.value = t
-        minAlertFired = false
-        maxAlertFired = false
+        lastMinAlertMs = 0L
+        lastMaxAlertMs = 0L
+        _activeAlerts.value = emptyList()
         viewModelScope.launch {
             settings.saveThresholds(
                 minEnabled = t.minTempEnabled,
@@ -252,6 +268,7 @@ class AnovaViewModel @Inject constructor(
         val temp = state.currentTemp ?: return
         val target = state.targetTemp
         val t = _thresholds.value
+        val now = System.currentTimeMillis()
 
         // Track when device reaches target temp during a cook.
         // Only reset when target temp changes (handled in init), NOT on status change —
@@ -260,26 +277,43 @@ class AnovaViewModel @Inject constructor(
             hasReachedTarget = true
         }
 
-        // Min alert: only fires after device has reached target temp (not during heat-up)
-        if (t.minTempEnabled && hasReachedTarget && temp <= t.minTemp) {
-            if (!minAlertFired) {
-                minAlertFired = true
-                alertManager.postTempAlert(
-                    "Temp ${fmt(temp)}${state.unit.symbol} — below min ${fmt(t.minTemp)}${state.unit.symbol}",
-                    AnovaAlertManager.NOTIFICATION_ID_TEMP_MIN
-                )
+        // Min alert: only fires after device has reached target temp (not during heat-up).
+        // Re-fires every ALERT_REPEAT_MS while condition remains active.
+        val minActive = t.minTempEnabled && hasReachedTarget && temp <= t.minTemp
+        if (minActive) {
+            if (lastMinAlertMs == 0L || (now - lastMinAlertMs) >= ALERT_REPEAT_MS) {
+                lastMinAlertMs = now
+                val msg = "Temp ${fmt(temp)}${state.unit.symbol} — below min ${fmt(t.minTemp)}${state.unit.symbol}"
+                alertManager.postTempAlert(msg, AnovaAlertManager.NOTIFICATION_ID_TEMP_MIN)
+                val others = _activeAlerts.value.filter { it.type != AlertType.MIN }
+                _activeAlerts.value = others + ActiveAlert(msg, AlertType.MIN)
             }
-        } else minAlertFired = false
+        } else {
+            lastMinAlertMs = 0L
+            if (_activeAlerts.value.any { it.type == AlertType.MIN }) {
+                _activeAlerts.value = _activeAlerts.value.filter { it.type != AlertType.MIN }
+            }
+        }
 
-        if (t.maxTempEnabled && temp >= t.maxTemp) {
-            if (!maxAlertFired) {
-                maxAlertFired = true
-                alertManager.postTempAlert(
-                    "Temp ${fmt(temp)}${state.unit.symbol} — above max ${fmt(t.maxTemp)}${state.unit.symbol}",
-                    AnovaAlertManager.NOTIFICATION_ID_TEMP_MAX
-                )
+        val maxActive = t.maxTempEnabled && temp >= t.maxTemp
+        if (maxActive) {
+            if (lastMaxAlertMs == 0L || (now - lastMaxAlertMs) >= ALERT_REPEAT_MS) {
+                lastMaxAlertMs = now
+                val msg = "Temp ${fmt(temp)}${state.unit.symbol} — above max ${fmt(t.maxTemp)}${state.unit.symbol}"
+                alertManager.postTempAlert(msg, AnovaAlertManager.NOTIFICATION_ID_TEMP_MAX)
+                val others = _activeAlerts.value.filter { it.type != AlertType.MAX }
+                _activeAlerts.value = others + ActiveAlert(msg, AlertType.MAX)
             }
-        } else maxAlertFired = false
+        } else {
+            lastMaxAlertMs = 0L
+            if (_activeAlerts.value.any { it.type == AlertType.MAX }) {
+                _activeAlerts.value = _activeAlerts.value.filter { it.type != AlertType.MAX }
+            }
+        }
+    }
+
+    companion object {
+        private const val ALERT_REPEAT_MS = 2 * 60 * 1_000L
     }
 
     private fun fmt(t: Float) = "%.1f".format(t)

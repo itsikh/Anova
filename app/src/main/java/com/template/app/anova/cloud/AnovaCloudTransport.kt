@@ -62,6 +62,13 @@ class AnovaCloudTransport @Inject constructor(
     /** Pending RESPONSE waiters keyed by requestId. */
     private val pendingCommands = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
+    /**
+     * Delayed re-send of CMD_APC_STOP. The cloud relay sometimes doesn't forward the stop
+     * to the physical device even though it responds "ok". We cancel this job when startCook()
+     * is called so a user re-start isn't immediately overridden.
+     */
+    private var stopRetryJob: Job? = null
+
     private var webSocket: WebSocket? = null
     private var cookerId: String? = null
     private var deviceType: String? = null
@@ -155,6 +162,8 @@ class AnovaCloudTransport @Inject constructor(
     }
 
     override suspend fun startCook(): Boolean {
+        stopRetryJob?.cancel()   // user deliberately starting — don't let a pending stop retry fire
+        stopRetryJob = null
         val id = cookerId ?: return false
         val type = deviceType ?: return false
         // Use the last known target temp; fall back to 60°C if no state yet.
@@ -169,7 +178,27 @@ class AnovaCloudTransport @Inject constructor(
     override suspend fun stopCook(): Boolean {
         val id = cookerId ?: return false
         val type = deviceType ?: return false
-        return sendCommand("CMD_APC_STOP", mapOf("cookerId" to id, "type" to type))
+        val payload = mapOf("cookerId" to id, "type" to type)
+        val result = sendCommand("CMD_APC_STOP", payload)
+
+        if (result) {
+            // The Anova cloud updates its shadow state to "idle" immediately, but the actual
+            // stop command reaches the physical device asynchronously and is unreliable —
+            // confirmed by protocol testing: first stop often doesn't stop the heating element.
+            // Re-send at +5 s and +10 s to guarantee delivery. The UI is unaffected because
+            // the shadow state is already "idle" and these fire quietly in the background.
+            stopRetryJob?.cancel()
+            stopRetryJob = scope.launch {
+                listOf(5_000L, 10_000L).forEach { delayMs ->
+                    delay(delayMs)
+                    val currentId = cookerId ?: return@launch
+                    val currentType = deviceType ?: return@launch
+                    AppLogger.d(TAG, "Stop retry at +${delayMs/1000}s")
+                    sendCommand("CMD_APC_STOP", mapOf("cookerId" to currentId, "type" to currentType))
+                }
+            }
+        }
+        return result
     }
 
     override suspend fun updateCook(targetTemp: Float?, timerSeconds: Int?): Boolean {
