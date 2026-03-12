@@ -6,6 +6,7 @@ import com.template.app.anova.ActiveTransport
 import com.template.app.anova.AnovaDeviceState
 import com.template.app.anova.AnovaRepository
 import com.template.app.anova.AnovaSettings
+import com.template.app.anova.AnovaStatus
 import com.template.app.anova.ConnectionMode
 import com.template.app.anova.ThresholdSettings
 import com.template.app.anova.cloud.AnovaFirebaseAuth
