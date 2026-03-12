@@ -25,11 +25,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.History
@@ -77,7 +75,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.ui.unit.Dp
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -88,11 +85,11 @@ import com.template.app.anova.ConnectionState
 import com.template.app.anova.ThresholdSettings
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.Canvas
+import com.template.app.presets.PresetsSheet
 import com.template.app.security.BiometricHelper
 import com.template.app.ui.theme.AnovaOrange
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.cos
@@ -141,6 +138,7 @@ fun MonitorScreen(
     var showTempEditDialog     by remember { mutableStateOf(false) }
     var showTimerEditDialog    by remember { mutableStateOf(false) }
     var showDisconnectConfirm  by remember { mutableStateOf(false) }
+    var showPresetsSheet       by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var googleSignedInAs       by remember { mutableStateOf<String?>(null) }
     var googleAuthSession      by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -189,7 +187,6 @@ fun MonitorScreen(
 
     val isConnected = state.connectionState == ConnectionState.CONNECTED
     val alertActive = thresholds.minTempEnabled || thresholds.maxTempEnabled
-    val timerFinishEpochMs = state.timerMinutes?.let { System.currentTimeMillis() + it * 60_000L }
 
     Scaffold(
         topBar = {
@@ -272,21 +269,16 @@ fun MonitorScreen(
 
             Spacer(Modifier.height(6.dp))
 
-            // Info row: Target | Remaining | Finishes at
+            // Info row: Target | Remaining | Updated
             InfoRow(
                 targetTemp = state.targetTemp,
                 unit = state.unit.symbol,
                 timerMinutes = state.timerMinutes,
-                finishEpoch = timerFinishEpochMs,
+                lastUpdated = state.lastUpdated,
                 isConnected = isConnected,
                 onTempClick = { if (isConnected) showTempEditDialog = true },
                 onTimerClick = { if (isConnected) showTimerEditDialog = true }
             )
-
-            Spacer(Modifier.height(6.dp))
-
-            // Times row: finish date · updated time
-            TimesRow(finishEpoch = timerFinishEpochMs, lastUpdated = state.lastUpdated)
 
             Spacer(Modifier.height(6.dp))
 
@@ -333,12 +325,13 @@ fun MonitorScreen(
                         .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    CookButton(
+                    CookControls(
                         status = state.status,
                         onStart = { vm.startCook() },
-                        onStop = { vm.stopCook() }
+                        onStop = { vm.stopCook() },
+                        onUpdate = { showTempEditDialog = true }
                     )
-                    PresetsButton(onClick = { /* TODO: open presets sheet */ })
+                    PresetsButton(onClick = { showPresetsSheet = true })
                 }
                 Spacer(Modifier.height(10.dp))
             }
@@ -384,7 +377,14 @@ fun MonitorScreen(
         } // BoxWithConstraints
     }
 
-    // ── Dialogs ───────────────────────────────────────────────────────────────
+    // ── Bottom sheets & dialogs ───────────────────────────────────────────────
+
+    if (showPresetsSheet) {
+        PresetsSheet(
+            useCelsius = state.unit.symbol == "C",
+            onDismiss = { showPresetsSheet = false }
+        )
+    }
 
     if (showThresholdDialog) {
         ThresholdDialog(
@@ -638,11 +638,11 @@ private fun DarkStatusRow(
     }
 }
 
-// ── Info row (Target | Remaining | Finishes at) ───────────────────────────────
+// ── Info row (Target | Remaining | Updated) ───────────────────────────────────
 
 @Composable
 private fun InfoRow(
-    targetTemp: Float?, unit: String, timerMinutes: Int?, finishEpoch: Long?,
+    targetTemp: Float?, unit: String, timerMinutes: Int?, lastUpdated: Long,
     isConnected: Boolean, onTempClick: () -> Unit, onTimerClick: () -> Unit
 ) {
     Row(
@@ -672,10 +672,10 @@ private fun InfoRow(
 
         Box(Modifier.width(1.dp).height(30.dp).background(Color(0xFF2A2A2A)))
 
-        // Finishes at
+        // Updated
         InfoCell(
-            label    = "FINISHES AT",
-            value    = if (finishEpoch != null) formatHHmm(finishEpoch) else "–",
+            label    = "UPDATED",
+            value    = if (lastUpdated > 0L) formatHHmm(lastUpdated) else "–",
             isAccent = false,
             onClick  = null
         )
@@ -716,41 +716,6 @@ private fun InfoCell(label: String, value: String, isAccent: Boolean, onClick: (
     }
 }
 
-// ── Times row ─────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TimesRow(finishEpoch: Long?, lastUpdated: Long) {
-    if (finishEpoch == null && lastUpdated <= 0L) return
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (finishEpoch != null) {
-            Text(
-                "Finishes ${formatFinishDate(finishEpoch)}",
-                style      = MaterialTheme.typography.labelSmall,
-                color      = DC_TextDim,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        if (finishEpoch != null && lastUpdated > 0L) {
-            Spacer(Modifier.width(6.dp))
-            Box(Modifier.size(3.dp).clip(CircleShape).background(DC_TextMuted))
-            Spacer(Modifier.width(6.dp))
-        }
-        if (lastUpdated > 0L) {
-            Text(
-                "Updated ${formatHHmm(lastUpdated)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = DC_TextMuted
-            )
-        }
-    }
-}
-
 // ── Alert strip ───────────────────────────────────────────────────────────────
 
 @Composable
@@ -775,26 +740,64 @@ private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean) {
     }
 }
 
-// ── Cook button ───────────────────────────────────────────────────────────────
+// ── Cook controls (Start · Stop · Update temp) ────────────────────────────────
 
 @Composable
-private fun CookButton(status: AnovaStatus, onStart: () -> Unit, onStop: () -> Unit) {
+private fun CookControls(
+    status: AnovaStatus,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onUpdate: () -> Unit
+) {
     val isRunning = status == AnovaStatus.RUNNING
-    Button(
-        onClick = if (isRunning) onStop else onStart,
-        modifier = Modifier.fillMaxWidth().height(56.dp),
-        shape  = RoundedCornerShape(18.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (isRunning) Color(0xFFD32F2F) else Color(0xFF2E7D32),
-            contentColor   = Color.White
-        )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
-            if (isRunning) "Stop Cook" else "Start Cook",
-            style      = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.3.sp
-        )
+        // Start
+        Button(
+            onClick = onStart,
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape  = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF2E7D32),
+                contentColor   = Color.White,
+                disabledContainerColor = Color(0xFF1A3D1A),
+                disabledContentColor   = Color(0xFF4A7A4A)
+            ),
+            enabled = !isRunning
+        ) {
+            Text("Start", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+
+        // Stop
+        Button(
+            onClick = onStop,
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape  = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFFD32F2F),
+                contentColor   = Color.White,
+                disabledContainerColor = Color(0xFF3D1A1A),
+                disabledContentColor   = Color(0xFF7A4A4A)
+            ),
+            enabled = isRunning
+        ) {
+            Text("Stop", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+
+        // Update (set target temp + timer)
+        OutlinedButton(
+            onClick = onUpdate,
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape  = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, DC_Track),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = DC_TextDim)
+        ) {
+            Icon(Icons.Default.Tune, null, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Set", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+        }
     }
 }
 
@@ -936,16 +939,5 @@ private val ActiveTransport.displayName get() = when (this) {
     ActiveTransport.NONE       -> ""
 }
 
-private val hhmm       = SimpleDateFormat("HH:mm", Locale.getDefault())
-private val finishFmt  = SimpleDateFormat("d MMM · HH:mm", Locale.getDefault())
+private val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault())
 private fun formatHHmm(millis: Long): String = hhmm.format(Date(millis))
-private fun formatFinishDate(millis: Long): String {
-    val today = Calendar.getInstance()
-    val finish = Calendar.getInstance().apply { timeInMillis = millis }
-    return if (today.get(Calendar.YEAR) == finish.get(Calendar.YEAR) &&
-               today.get(Calendar.DAY_OF_YEAR) == finish.get(Calendar.DAY_OF_YEAR)) {
-        "today · ${formatHHmm(millis)}"
-    } else {
-        finishFmt.format(Date(millis))
-    }
-}
