@@ -14,7 +14,9 @@ data class AnovaDeviceState(
 )
 
 enum class ConnectionState {
-    DISCONNECTED, SCANNING, CONNECTING, CONNECTED
+    DISCONNECTED, SCANNING, CONNECTING, CONNECTED,
+    /** Lost connection — auto-retry in progress. Offline notification held until retries exhausted. */
+    RECONNECTING
 }
 
 enum class TempUnit {

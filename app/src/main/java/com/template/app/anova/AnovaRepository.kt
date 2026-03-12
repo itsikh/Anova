@@ -210,12 +210,23 @@ class AnovaRepository @Inject constructor(
                 _deviceState.update { it.copy(connectionState = state) }
                 when (state) {
                     ConnectionState.CONNECTED    -> { _deviceState.update { it.copy(connectionError = null) }; purgeOldHistory(); startPolling() }
-                    ConnectionState.DISCONNECTED -> {
+                    ConnectionState.RECONNECTING -> {
+                        // Lost connection but auto-retry is in progress — clear live readings
+                        // but do NOT fire the offline notification yet.
                         stopPolling()
-                        val wasRunning = _deviceState.value.status == AnovaStatus.RUNNING
                         _deviceState.update { it.copy(currentTemp = null, targetTemp = null, timerMinutes = null, status = AnovaStatus.UNKNOWN) }
                         alertManager.cancelCookNotification()
-                        if (wasRunning) checkAlert(settings.alertDeviceOffline) {
+                    }
+                    ConnectionState.DISCONNECTED -> {
+                        stopPolling()
+                        // Fire offline notification if we were running OR if we just finished
+                        // exhausting reconnect retries (came from RECONNECTING state).
+                        val prevState = _deviceState.value
+                        val shouldNotify = prevState.status == AnovaStatus.RUNNING
+                            || prevState.connectionState == ConnectionState.RECONNECTING
+                        _deviceState.update { it.copy(currentTemp = null, targetTemp = null, timerMinutes = null, status = AnovaStatus.UNKNOWN) }
+                        alertManager.cancelCookNotification()
+                        if (shouldNotify) checkAlert(settings.alertDeviceOffline) {
                             alertManager.postEventAlert("Anova offline", "Lost connection to your device.", AnovaAlertManager.NOTIFICATION_ID_OFFLINE)
                         }
                     }

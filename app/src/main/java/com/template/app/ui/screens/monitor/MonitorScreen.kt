@@ -892,7 +892,7 @@ private fun ActionButton(connectionState: ConnectionState, onConnect: () -> Unit
             colors = ButtonDefaults.buttonColors(containerColor = DC_Orange, contentColor = Color.White)
         ) { Text("Connect", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) }
 
-        ConnectionState.SCANNING, ConnectionState.CONNECTING -> OutlinedButton(
+        ConnectionState.SCANNING, ConnectionState.CONNECTING, ConnectionState.RECONNECTING -> OutlinedButton(
             onClick  = onDisconnect,
             modifier = Modifier.fillMaxWidth().height(56.dp),
             shape    = RoundedCornerShape(16.dp),
@@ -902,7 +902,11 @@ private fun ActionButton(connectionState: ConnectionState, onConnect: () -> Unit
             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = DC_Orange)
             Spacer(Modifier.width(10.dp))
             Text(
-                if (connectionState == ConnectionState.SCANNING) "Scanning…" else "Connecting…",
+                when (connectionState) {
+                    ConnectionState.SCANNING     -> "Scanning…"
+                    ConnectionState.RECONNECTING -> "Reconnecting…"
+                    else                         -> "Connecting…"
+                },
                 style = MaterialTheme.typography.labelLarge
             )
         }
@@ -1063,12 +1067,13 @@ private fun formatTimer(timerMinutes: Int?): String {
 }
 
 private fun dcStatusLabel(status: AnovaStatus, cs: ConnectionState) = when {
-    cs == ConnectionState.DISCONNECTED -> "Not connected"
-    cs == ConnectionState.SCANNING     -> "Scanning…"
-    cs == ConnectionState.CONNECTING   -> "Connecting…"
-    status == AnovaStatus.RUNNING      -> "Running"
-    status == AnovaStatus.STOPPED      -> "Stopped"
-    else                               -> "Connected"
+    cs == ConnectionState.DISCONNECTED  -> "Not connected"
+    cs == ConnectionState.SCANNING      -> "Scanning…"
+    cs == ConnectionState.CONNECTING    -> "Connecting…"
+    cs == ConnectionState.RECONNECTING  -> "Reconnecting…"
+    status == AnovaStatus.RUNNING       -> "Running"
+    status == AnovaStatus.STOPPED       -> "Stopped"
+    else                                -> "Connected"
 }
 
 private val ActiveTransport.displayName get() = when (this) {
