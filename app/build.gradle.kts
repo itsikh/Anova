@@ -14,8 +14,8 @@ android {
         applicationId = "com.template.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "0.0.35"
+        versionCode = 36
+        versionName = "0.0.36"
     }
 
     signingConfigs {
