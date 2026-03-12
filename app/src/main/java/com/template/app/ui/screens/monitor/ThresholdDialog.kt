@@ -32,9 +32,10 @@ fun ThresholdDialog(
     onDismiss: () -> Unit
 ) {
     var minEnabled by remember { mutableStateOf(current.minTempEnabled) }
-    var minTemp by remember { mutableStateOf(current.minTemp.toString()) }
+    var minTemp    by remember { mutableStateOf("%.1f".format(current.minTemp)) }
+    var minManuallyEdited by remember { mutableStateOf(false) }
     var maxEnabled by remember { mutableStateOf(current.maxTempEnabled) }
-    var maxTemp by remember { mutableStateOf(current.maxTemp.toString()) }
+    var maxTemp    by remember { mutableStateOf(current.maxTemp.toString()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -57,8 +58,12 @@ fun ThresholdDialog(
                 if (minEnabled) {
                     OutlinedTextField(
                         value = minTemp,
-                        onValueChange = { minTemp = it },
-                        label = { Text("Min temp ($unitSymbol)") },
+                        onValueChange = { minTemp = it; minManuallyEdited = true },
+                        label = {
+                            Text(if (current.isAutoMin && !minManuallyEdited)
+                                "Min temp ($unitSymbol) — auto (10% below target)"
+                            else "Min temp ($unitSymbol)")
+                        },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -94,6 +99,7 @@ fun ThresholdDialog(
                     ThresholdSettings(
                         minTempEnabled = minEnabled,
                         minTemp = minTemp.toFloatOrNull() ?: current.minTemp,
+                        isAutoMin = current.isAutoMin && !minManuallyEdited,
                         maxTempEnabled = maxEnabled,
                         maxTemp = maxTemp.toFloatOrNull() ?: current.maxTemp
                     )

@@ -29,6 +29,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
@@ -165,7 +167,12 @@ fun MonitorScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 actions = {
                     IconButton(onClick = { showThresholdDialog = true }) {
-                        Icon(Icons.Default.Tune, "Alerts", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val alertActive = thresholds.minTempEnabled || thresholds.maxTempEnabled
+                        Icon(
+                            if (alertActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
+                            "Alerts",
+                            tint = if (alertActive) AnovaOrange else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     IconButton(onClick = onOpenSchedule) {
                         Icon(Icons.Default.DateRange, "Schedule", tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -413,6 +420,28 @@ private fun ReadoutCard(
             } else {
                 Text("Current Temperature", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+            }
+
+            // Min alert indicator — always visible when min alert is enabled
+            if (thresholds.minTempEnabled && thresholds.minTemp > 0f) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        Icons.Default.NotificationsNone, null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Text(
+                        "Alert if below %.1f%s%s".format(
+                            thresholds.minTemp, unit,
+                            if (thresholds.isAutoMin) " (auto)" else ""
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
             }
 
             Spacer(Modifier.height(20.dp))

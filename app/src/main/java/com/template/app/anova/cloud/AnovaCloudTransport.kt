@@ -158,10 +158,16 @@ class AnovaCloudTransport @Inject constructor(
 
     override suspend fun updateCook(targetTemp: Float?, timerSeconds: Int?): Boolean {
         val id = cookerId ?: return false
-        val payload = mutableMapOf<String, Any?>("cookerId" to id)
-        if (targetTemp != null) payload["targetTemp"] = targetTemp
-        if (timerSeconds != null) payload["timerSeconds"] = timerSeconds
-        return sendCommand("CMD_APC_UPDATE_COOK", payload)
+        var ok = true
+        // Each field is a separate command — server does not accept a combined update command.
+        if (targetTemp != null) {
+            ok = sendCommand("CMD_APC_SET_TARGET_TEMP", mapOf("cookerId" to id, "targetTemp" to targetTemp)) && ok
+        }
+        if (timerSeconds != null) {
+            // Server expects {"cookerId":..., "timer": <int_seconds>}
+            ok = sendCommand("CMD_APC_SET_TIMER", mapOf("cookerId" to id, "timer" to timerSeconds)) && ok
+        }
+        return ok
     }
 
     // ── WebSocket ─────────────────────────────────────────────────────────────

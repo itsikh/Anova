@@ -82,9 +82,30 @@ class AnovaViewModel @Inject constructor(
 
     private var minAlertFired = false
     private var maxAlertFired = false
+    // True once the device has reached its target temp during the current cook.
+    // Min alert only fires after this point — prevents false alerts while heating up.
+    private var hasReachedTarget = false
 
     init {
-        viewModelScope.launch { deviceState.collect { checkThresholds(it) } }
+        viewModelScope.launch {
+            var lastTarget: Float? = null
+            displayDeviceState.collect { state ->
+                val target = state.targetTemp
+                // When target temp changes, recalculate auto min (and reset reached flag)
+                if (target != null && target != lastTarget) {
+                    lastTarget = target
+                    if (_thresholds.value.isAutoMin) {
+                        _thresholds.value = _thresholds.value.copy(
+                            minTempEnabled = true,
+                            minTemp = target * 0.9f
+                        )
+                    }
+                    hasReachedTarget = false
+                    minAlertFired = false
+                }
+                checkThresholds(state)
+            }
+        }
     }
 
     // ── Connection ────────────────────────────────────────────────────────────
@@ -185,13 +206,25 @@ class AnovaViewModel @Inject constructor(
         _thresholds.value = t
         minAlertFired = false
         maxAlertFired = false
+        // If the user manually overrides auto min, keep isAutoMin = false going forward
+        // (already stored in t.isAutoMin from the dialog)
     }
 
     private fun checkThresholds(state: AnovaDeviceState) {
         val temp = state.currentTemp ?: return
+        val target = state.targetTemp
         val t = _thresholds.value
 
-        if (t.minTempEnabled && temp <= t.minTemp) {
+        // Track when device reaches target temp during a cook
+        if (state.status == AnovaStatus.RUNNING && target != null && temp >= target - 0.5f) {
+            hasReachedTarget = true
+        }
+        if (state.status == AnovaStatus.STOPPED || state.status == AnovaStatus.UNKNOWN) {
+            hasReachedTarget = false
+        }
+
+        // Min alert: only fires after device has reached target temp (not during heat-up)
+        if (t.minTempEnabled && hasReachedTarget && temp <= t.minTemp) {
             if (!minAlertFired) {
                 minAlertFired = true
                 alertManager.postTempAlert(
