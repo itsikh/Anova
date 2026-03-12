@@ -27,7 +27,7 @@ private val Context.debugDataStore: DataStore<Preferences> by preferencesDataSto
  * ## Settings
  * | Setting | Default | Purpose |
  * |---------|---------|---------|
- * | [logLevel] | DEBUG (debug) / WARN (release) | Controls [AppLogger] verbosity |
+ * | [logLevel] | DEBUG (debug) / INFO (release) | Controls [AppLogger] verbosity |
  * | [showBugButton] | `true` | Shows/hides the floating bug-report FAB |
  * | [autoUpdateEnabled] | `true` | Whether [update.AppUpdateManager] checks on launch |
  * | [adminMode] | `false` | Unlocks the hidden debug section in [ui.components.SettingsScaffold] |
@@ -53,7 +53,7 @@ class DebugSettings @Inject constructor(
 
     /**
      * The current [LogLevel] as a [Flow]. Emits a new value whenever the level changes.
-     * Defaults to [LogLevel.DEBUG] in debug builds and [LogLevel.WARN] in release builds
+     * Defaults to [LogLevel.DEBUG] in debug builds and [LogLevel.INFO] in release builds
      * if no value has been persisted yet.
      */
     val logLevel: Flow<LogLevel> = context.debugDataStore.data.map { prefs ->
@@ -152,6 +152,6 @@ class DebugSettings @Inject constructor(
     }
 
     private fun defaultLogLevel(): LogLevel {
-        return if (com.template.app.BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.WARN
+        return if (com.template.app.BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.INFO
     }
 }

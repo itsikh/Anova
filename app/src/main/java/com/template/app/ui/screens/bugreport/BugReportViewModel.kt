@@ -175,7 +175,7 @@ class BugReportViewModel @Inject constructor(
                 _submitting.value = true
                 _result.value = null
 
-                val recentLogs = AppLogger.getRecentLogs(100)
+                val recentLogs = AppLogger.getRecentLogs(200)
                 val crashLog = if (hasCrashLogs) crashLogRepository.getLatestCrashLog() else null
 
                 var screenshotUrl: String? = null
@@ -216,7 +216,7 @@ class BugReportViewModel @Inject constructor(
                         appendLine()
                     }
 
-                    appendLine("## Logs (last 100 lines)")
+                    appendLine("## Logs (last 200 lines)")
                     appendLine("<details>")
                     appendLine("<summary>Show logs</summary>")
                     appendLine()

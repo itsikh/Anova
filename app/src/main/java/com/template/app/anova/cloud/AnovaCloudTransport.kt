@@ -210,16 +210,16 @@ class AnovaCloudTransport @Inject constructor(
     }
 
     private fun handleMessage(text: String) {
-        AppLogger.d(TAG, "WS msg: ${text.take(200)}")
         try {
             val typeOnly = gson.fromJson(text, WsTypeOnly::class.java)
+            AppLogger.d(TAG, "WS msg [${typeOnly.type}]: ${text.take(200)}")
             when (typeOnly.type) {
                 "EVENT_APC_WIFI_LIST"  -> handleWifiList(text)
                 "EVENT_APC_STATE"      -> handleState(text)
-                else -> { /* ignore */ }
+                else -> AppLogger.i(TAG, "Unhandled WS type: ${typeOnly.type} — ${text.take(120)}")
             }
         } catch (e: Exception) {
-            AppLogger.w(TAG, "Message parse error: ${e.message}")
+            AppLogger.w(TAG, "Message parse error: ${e.message} — ${text.take(120)}")
         }
     }
 
