@@ -212,9 +212,25 @@ class AnovaCloudTransport @Inject constructor(
             handleMessage(text)
         }
 
+        override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+            // Server is initiating the close. Acknowledge it immediately so OkHttp doesn't
+            // leave the connection half-open. Without this override, OkHttp waits for the
+            // app to call ws.close() — causing a 30s timeout before the error is shown.
+            AppLogger.i(TAG, "WebSocket closing (server): $code $reason")
+            ws.close(1000, "")
+            if (_connectionState.value == ConnectionState.CONNECTING) {
+                connectionTimeoutJob?.cancel()
+                connectionTimeoutJob = null
+                _lastError.value = "No Anova device found. Make sure the cooker is powered on and connected to Wi-Fi."
+                _connectionState.value = ConnectionState.DISCONNECTED
+            }
+        }
+
         override fun onClosed(ws: WebSocket, code: Int, reason: String) {
             AppLogger.i(TAG, "WebSocket closed: $code $reason")
-            _connectionState.value = ConnectionState.DISCONNECTED
+            if (_connectionState.value != ConnectionState.DISCONNECTED) {
+                _connectionState.value = ConnectionState.DISCONNECTED
+            }
         }
 
         override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
