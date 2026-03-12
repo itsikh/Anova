@@ -382,6 +382,7 @@ fun MonitorScreen(
     if (showThresholdDialog) {
         ThresholdDialog(
             current = thresholds, unitSymbol = state.unit.symbol,
+            currentTargetTemp = state.targetTemp,
             onConfirm = { vm.updateThresholds(it) }, onDismiss = { showThresholdDialog = false }
         )
     }
@@ -389,7 +390,8 @@ fun MonitorScreen(
     if (activeAlerts.isNotEmpty()) {
         ActiveAlertDialog(
             alerts = activeAlerts,
-            onAcknowledge = { vm.acknowledgeAlerts() }
+            onAcknowledge = { vm.acknowledgeAlerts() },
+            onSnooze = { vm.snoozeAlerts() }
         )
     }
 
@@ -744,7 +746,11 @@ private fun InfoCell(label: String, value: String, isAccent: Boolean, onClick: (
 // ── Active alert popup ────────────────────────────────────────────────────────
 
 @Composable
-private fun ActiveAlertDialog(alerts: List<ActiveAlert>, onAcknowledge: () -> Unit) {
+private fun ActiveAlertDialog(
+    alerts: List<ActiveAlert>,
+    onAcknowledge: () -> Unit,
+    onSnooze: () -> Unit
+) {
     AlertDialog(
         onDismissRequest = { /* must acknowledge explicitly */ },
         title = { Text("⚠ Active Alert") },
@@ -762,7 +768,9 @@ private fun ActiveAlertDialog(alerts: List<ActiveAlert>, onAcknowledge: () -> Un
         confirmButton = {
             TextButton(onClick = onAcknowledge) { Text("Acknowledge") }
         },
-        dismissButton = null
+        dismissButton = {
+            TextButton(onClick = onSnooze) { Text("Snooze 5 min") }
+        }
     )
 }
 
