@@ -45,13 +45,12 @@ class TemplateApplication : Application() {
             }
         )
 
-        // Read saved alert sound + vibration so channels are always created with the user's
-        // preferences — not the default. This matters on restarts after recreateAlertChannels()
-        // deleted the old channels (deleted channels lose their sound settings system-side).
+        // Always delete + recreate alert channels on startup so the sound and vibration
+        // settings always match what's saved in DataStore. Android 8+ ignores setSound()
+        // on an existing channel, so we must delete first to force the update.
         val (savedSound, savedVibrate) = runBlocking {
             anovaSettings.alertSoundUri.first() to anovaSettings.alertVibrate.first()
         }
-        alertManager.createAlarmChannel(soundUri = savedSound, vibrate = savedVibrate)
-        alertManager.createAlertsChannel(soundUri = savedSound, vibrate = savedVibrate)
+        alertManager.recreateAlertChannels(soundUri = savedSound, vibrate = savedVibrate)
     }
 }

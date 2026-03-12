@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -92,6 +93,22 @@ class AnovaViewModel @Inject constructor(
     private var hasReachedTarget = false
 
     init {
+        // Load persisted thresholds from DataStore
+        viewModelScope.launch {
+            val minEnabled = settings.thresholdMinEnabled.first()
+            val minTemp    = settings.thresholdMinTemp.first()
+            val isAutoMin  = settings.thresholdMinAuto.first()
+            val maxEnabled = settings.thresholdMaxEnabled.first()
+            val maxTemp    = settings.thresholdMaxTemp.first()
+            _thresholds.value = ThresholdSettings(
+                minTempEnabled = minEnabled,
+                minTemp        = minTemp,
+                isAutoMin      = isAutoMin,
+                maxTempEnabled = maxEnabled,
+                maxTemp        = maxTemp
+            )
+        }
+
         viewModelScope.launch {
             var lastTarget: Float? = null
             var lastStatus: AnovaStatus? = null
@@ -220,8 +237,15 @@ class AnovaViewModel @Inject constructor(
         _thresholds.value = t
         minAlertFired = false
         maxAlertFired = false
-        // If the user manually overrides auto min, keep isAutoMin = false going forward
-        // (already stored in t.isAutoMin from the dialog)
+        viewModelScope.launch {
+            settings.saveThresholds(
+                minEnabled = t.minTempEnabled,
+                minTemp    = t.minTemp,
+                isAutoMin  = t.isAutoMin,
+                maxEnabled = t.maxTempEnabled,
+                maxTemp    = t.maxTemp
+            )
+        }
     }
 
     private fun checkThresholds(state: AnovaDeviceState) {
