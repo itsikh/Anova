@@ -216,12 +216,11 @@ class AnovaViewModel @Inject constructor(
         val target = state.targetTemp
         val t = _thresholds.value
 
-        // Track when device reaches target temp during a cook
+        // Track when device reaches target temp during a cook.
+        // Only reset when target temp changes (handled in init), NOT on status change —
+        // otherwise min alerts are silently blocked after the cook finishes and temp drops.
         if (state.status == AnovaStatus.RUNNING && target != null && temp >= target - 0.5f) {
             hasReachedTarget = true
-        }
-        if (state.status == AnovaStatus.STOPPED || state.status == AnovaStatus.UNKNOWN) {
-            hasReachedTarget = false
         }
 
         // Min alert: only fires after device has reached target temp (not during heat-up)

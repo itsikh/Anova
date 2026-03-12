@@ -592,7 +592,7 @@ private fun ThermostatRing(currentTemp: Float?, targetTemp: Float?, unit: String
                     letterSpacing = (-2).sp
                 )
             }
-            Text("°$unit", fontSize = 15.sp, fontWeight = FontWeight.Light, color = DC_TextDim)
+            Text(unit, fontSize = 15.sp, fontWeight = FontWeight.Light, color = DC_TextDim)
             Spacer(Modifier.height(2.dp))
             Text(
                 "CURRENT",
@@ -679,7 +679,7 @@ private fun InfoRow(
         // Target
         InfoCell(
             label    = "TARGET",
-            value    = if (targetTemp != null) "%.1f°%s".format(targetTemp, unit) else "–",
+            value    = if (targetTemp != null) "%.1f%s".format(targetTemp, unit) else "–",
             isAccent = targetTemp != null,
             onClick  = if (isConnected && targetTemp != null) onTempClick else null
         )
@@ -762,7 +762,7 @@ private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean) {
     ) {
         Icon(Icons.Default.NotificationsActive, null, tint = DC_Orange, modifier = Modifier.size(16.dp))
         Text(
-            "Alert below %.1f°%s%s".format(minTemp, unit, if (isAuto) " (auto)" else ""),
+            "Alert below %.1f%s%s".format(minTemp, unit, if (isAuto) " (auto)" else ""),
             style      = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color      = DC_Orange
