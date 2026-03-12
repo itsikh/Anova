@@ -16,6 +16,7 @@ datastore = "1.1.1"
 securityCrypto = "1.1.0-alpha06"
 biometric = "1.1.0"
 gson = "2.10.1"
+glance = "1.1.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -63,6 +64,10 @@ androidx-biometric = { group = "androidx.biometric", name = "biometric", version
 
 # Gson
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+
+# Glance (home-screen widget)
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
+glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glance" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

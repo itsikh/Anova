@@ -12,16 +12,17 @@ import com.template.app.anova.cloud.AnovaFirebaseAuth
 import com.template.app.notifications.AnovaAlertManager
 import com.template.app.security.SecureKeyManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import com.template.app.anova.TempUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
-
 
 @HiltViewModel
 class AnovaViewModel @Inject constructor(
@@ -35,15 +36,32 @@ class AnovaViewModel @Inject constructor(
     val deviceState: StateFlow<AnovaDeviceState> = repository.deviceState
     val activeTransport: StateFlow<ActiveTransport> = repository.activeTransport
 
+    /** Device state with temperatures converted to the user's preferred unit. */
+    val displayDeviceState: StateFlow<AnovaDeviceState> =
+        combine(repository.deviceState, settings.tempUnitCelsius) { state, wantCelsius ->
+            val preferredUnit = if (wantCelsius) TempUnit.CELSIUS else TempUnit.FAHRENHEIT
+            if (state.unit == preferredUnit) return@combine state
+            // Convert temperatures
+            fun convert(t: Float?) = t?.let {
+                if (preferredUnit == TempUnit.FAHRENHEIT) it * 9f / 5f + 32f
+                else (it - 32f) * 5f / 9f
+            }
+            state.copy(
+                currentTemp = convert(state.currentTemp),
+                targetTemp  = convert(state.targetTemp),
+                unit        = preferredUnit
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.deviceState.value)
+
     val connectionMode: StateFlow<ConnectionMode> = settings.connectionMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ConnectionMode.AUTO)
-    val localWifiIp: StateFlow<String> = settings.localWifiIp
+    val localWifiIp:   StateFlow<String>  = settings.localWifiIp
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
-    val cloudEmail: StateFlow<String> = settings.cloudEmail
+    val cloudEmail:    StateFlow<String>  = settings.cloudEmail
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
-    val localPollMs: StateFlow<Long> = settings.localPollMs
+    val localPollMs:   StateFlow<Long>    = settings.localPollMs
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_LOCAL_POLL_MS)
-    val remotePollMs: StateFlow<Long> = settings.remotePollMs
+    val remotePollMs:  StateFlow<Long>    = settings.remotePollMs
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_REMOTE_POLL_MS)
 
     private val _thresholds = MutableStateFlow(ThresholdSettings())
@@ -55,6 +73,13 @@ class AnovaViewModel @Inject constructor(
     private val _scannedIp = MutableStateFlow<String?>(null)
     val scannedIp: StateFlow<String?> = _scannedIp.asStateFlow()
 
+    private val _controlError = MutableStateFlow<String?>(null)
+    val controlError: StateFlow<String?> = _controlError.asStateFlow()
+
+    /** Expiry of the stored Anova JWT, or 0 if none. */
+    val anovaJwtExpiryMs: Long get() = firebaseAuth.anovaJwtExpiryMs
+    val storedEmail: String?   get() = firebaseAuth.storedEmail
+
     private var minAlertFired = false
     private var maxAlertFired = false
 
@@ -62,35 +87,66 @@ class AnovaViewModel @Inject constructor(
         viewModelScope.launch { deviceState.collect { checkThresholds(it) } }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Connection
-    // -----------------------------------------------------------------------------------------
+    // ── Connection ────────────────────────────────────────────────────────────
 
-    fun connect() = repository.connect()
+    fun connect()    = repository.connect()
     fun disconnect() = repository.disconnect()
 
-    /** Store a Google OAuth access token so the next [connect] uses Google SSO. */
-    fun setGoogleToken(googleAccessToken: String) {
-        repository.setGoogleToken(googleAccessToken)
-    }
-
-    /**
-     * Builds the Google OAuth URL for a browser-based sign-in flow.
-     * Returns (authUri, sessionId) to open in a WebView — never fails.
-     */
+    fun setGoogleToken(token: String) = repository.setGoogleToken(token)
     fun createGoogleAuthSession(): Pair<String, String> = firebaseAuth.createGoogleAuthUri()
 
-    /**
-     * Exchanges the intercepted Google OAuth redirect URL + sessionId for a Firebase token.
-     * On success, tells the cloud transport to use the cached token and returns a non-null marker.
-     */
     suspend fun signInWithGoogleRedirect(redirectUrl: String, sessionId: String): String? =
         withContext(Dispatchers.IO) {
             val token = firebaseAuth.signInWithGoogleRedirectUrl(redirectUrl, sessionId)
                 ?: return@withContext null
             repository.useGoogleSsoSession()
-            token // non-null means success
+            token
         }
+
+    /** Seed auth from a pasted Firebase refresh token (from the Mac HTML page). */
+    suspend fun seedRefreshToken(refreshToken: String, email: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            firebaseAuth.seedRefreshToken(refreshToken, email)
+        }
+
+    fun clearAuth() {
+        firebaseAuth.clearAll()
+    }
+
+    // ── Cook control ──────────────────────────────────────────────────────────
+
+    fun startCook() {
+        viewModelScope.launch {
+            val ok = repository.startCook()
+            if (!ok) _controlError.value = "Failed to start cook — check connection."
+        }
+    }
+
+    fun stopCook() {
+        viewModelScope.launch {
+            val ok = repository.stopCook()
+            if (!ok) _controlError.value = "Failed to stop cook — check connection."
+        }
+    }
+
+    fun updateTemp(targetTemp: Float) {
+        viewModelScope.launch {
+            val ok = repository.updateCook(targetTemp = targetTemp)
+            if (!ok) _controlError.value = "Failed to update temperature."
+        }
+    }
+
+    fun updateTimer(hours: Int, minutes: Int) {
+        val totalSeconds = (hours * 3600) + (minutes * 60)
+        viewModelScope.launch {
+            val ok = repository.updateCook(timerSeconds = totalSeconds)
+            if (!ok) _controlError.value = "Failed to update timer."
+        }
+    }
+
+    fun dismissControlError() { _controlError.value = null }
+
+    // ── Device scan ───────────────────────────────────────────────────────────
 
     fun scanForDevice() {
         viewModelScope.launch {
@@ -98,10 +154,7 @@ class AnovaViewModel @Inject constructor(
             _scannedIp.value = null
             val ip = repository.discoverDevice()
             _isScanning.value = false
-            if (ip != null) {
-                settings.setLocalWifiIp(ip)
-                _scannedIp.value = ip
-            }
+            if (ip != null) { settings.setLocalWifiIp(ip); _scannedIp.value = ip }
         }
     }
 
@@ -109,9 +162,7 @@ class AnovaViewModel @Inject constructor(
         viewModelScope.launch { settings.setConnectionMode(mode) }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Settings persistence
-    // -----------------------------------------------------------------------------------------
+    // ── Settings ──────────────────────────────────────────────────────────────
 
     fun saveLocalSettings(ip: String, pollMs: Long) {
         viewModelScope.launch {
@@ -123,26 +174,18 @@ class AnovaViewModel @Inject constructor(
     fun saveCloudSettings(email: String, password: String, pollMs: Long) {
         viewModelScope.launch {
             settings.setCloudEmail(email.trim())
-            if (password.isNotBlank()) {
-                secureKeyManager.saveKey(AnovaRepository.KEY_CLOUD_PASSWORD, password)
-            }
+            if (password.isNotBlank()) secureKeyManager.saveKey(AnovaRepository.KEY_CLOUD_PASSWORD, password)
             settings.setRemotePollMs(pollMs.coerceAtLeast(10_000L))
         }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Thresholds
-    // -----------------------------------------------------------------------------------------
+    // ── Thresholds ────────────────────────────────────────────────────────────
 
     fun updateThresholds(t: ThresholdSettings) {
         _thresholds.value = t
         minAlertFired = false
         maxAlertFired = false
     }
-
-    // -----------------------------------------------------------------------------------------
-    // Internal
-    // -----------------------------------------------------------------------------------------
 
     private fun checkThresholds(state: AnovaDeviceState) {
         val temp = state.currentTemp ?: return

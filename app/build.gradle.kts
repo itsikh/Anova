@@ -104,6 +104,10 @@ dependencies {
     // Gson
     implementation(libs.gson)
 
+    // Glance (home-screen widget)
+    implementation(libs.glance.appwidget)
+    implementation(libs.glance.material3)
+
     // Google Sign-In via CredentialManager (no SHA-1 registration needed)
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")

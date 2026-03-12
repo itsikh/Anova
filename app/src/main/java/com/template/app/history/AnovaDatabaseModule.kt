@@ -1,6 +1,7 @@
 package com.template.app.history
 
 import android.content.Context
+import com.template.app.schedule.ScheduleDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -21,4 +22,9 @@ object AnovaDatabaseModule {
     @Singleton
     fun provideTemperatureReadingDao(db: AnovaDatabase): TemperatureReadingDao =
         db.temperatureReadingDao()
+
+    @Provides
+    @Singleton
+    fun provideScheduleDao(db: AnovaDatabase): ScheduleDao =
+        db.scheduleDao()
 }

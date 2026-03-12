@@ -1,36 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Network (GitHub API, WiFi TCP connection to device) -->
+    <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
-    <!-- Bluetooth LE — Android 12+ (API 31+) -->
+    <!-- Bluetooth LE — Android 12+ -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
-        tools:targetApi="s"
-        xmlns:tools="http://schemas.android.com/tools" />
+        tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
-        tools:targetApi="s"
-        xmlns:tools="http://schemas.android.com/tools" />
+        tools:targetApi="s" />
 
-    <!-- Bluetooth LE — Android 11 and below (location required for BLE scan) -->
-    <uses-permission android:name="android.permission.BLUETOOTH"
-        android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
-        android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="30" />
+    <!-- Bluetooth LE — Android 11 and below -->
+    <uses-permission android:name="android.permission.BLUETOOTH"          android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"    android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
 
-    <!-- Notifications (threshold alerts, backup) -->
+    <!-- Notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Biometric, OTA updates, backup -->
+    <!-- Foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <!-- Background monitoring restart on boot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Scheduling -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- Wake lock (keep network alive during cook) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Vibration for alerts -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Biometric, OTA, backup -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!-- BLE hardware feature declaration (non-required so app installs on non-BLE devices too) -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <application
@@ -40,6 +52,7 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.TemplateApp">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -51,15 +64,57 @@
             </intent-filter>
         </activity>
 
-        <!--
-            Transparent, no-UI activity that opens the system SAF file picker so the user
-            can choose where to save a pending backup ZIP.
-        -->
         <activity
             android:name=".backup.BackupSaveActivity"
             android:exported="false"
             android:launchMode="singleInstance"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Foreground monitoring service -->
+        <service
+            android:name=".service.AnovaMonitorService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!-- Notification action receiver (Stop cook, +1 hour) -->
+        <receiver
+            android:name=".service.NotificationActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.template.app.ACTION_STOP_COOK" />
+                <action android:name="com.template.app.ACTION_ADD_HOUR" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Schedule alarm receiver -->
+        <receiver
+            android:name=".schedule.ScheduleAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.template.app.ACTION_SCHEDULE_FIRE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Boot receiver (reconnect after reboot if user was connected) -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Home-screen widget -->
+        <receiver
+            android:name=".widget.AnovaWidgetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/anova_widget_info" />
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -70,6 +125,7 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
     </application>
 
 </manifest>

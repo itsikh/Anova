@@ -3,29 +3,11 @@ package com.template.app
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.media.AudioAttributes
+import android.provider.Settings
 import com.template.app.logging.GlobalExceptionHandler
 import dagger.hilt.android.HiltAndroidApp
 
-/**
- * Application entry point for the template app.
- *
- * Responsibilities:
- * - Annotated with [@HiltAndroidApp] to trigger Hilt's code generation and make DI
- *   available across the whole application.
- * - Installs [GlobalExceptionHandler] as the default uncaught exception handler so that
- *   any crash on any thread is captured to a file before the system default handler runs.
- *   This allows crash logs to be included in the next bug report the user submits.
- * - Creates the backup notification channel ([AppConfig.NOTIFICATION_CHANNEL_BACKUP]) used
- *   by [backup.BaseBackupManager] to post "Backup ready — tap to save" notifications.
- *
- * ## Adding initialization
- * Place one-time startup work (SDK inits, analytics, etc.) in [onCreate] after `super.onCreate()`.
- * Keep it lightweight — heavy work should be deferred to a background coroutine.
- *
- * ## Hilt
- * Because this class is annotated with [@HiltAndroidApp], it is the root of the Hilt
- * component hierarchy. All [@Singleton] scoped objects live as long as this Application.
- */
 @HiltAndroidApp
 class TemplateApplication : Application() {
 
@@ -39,22 +21,44 @@ class TemplateApplication : Application() {
 
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java) ?: return
+
         manager.createNotificationChannel(
-            NotificationChannel(
-                AppConfig.NOTIFICATION_CHANNEL_BACKUP,
-                "Backup",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Notifications for completed backups that are ready to save"
+            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_BACKUP, "Backup", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Notifications for completed backups"
             }
         )
+
+        // Alarm channel — bypasses DND for critical temperature alerts
         manager.createNotificationChannel(
-            NotificationChannel(
-                AppConfig.NOTIFICATION_CHANNEL_ALERTS,
-                "Anova Alerts",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Temperature threshold alerts from the Anova Precision Cooker"
+            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALARM, "Temperature Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Critical temperature threshold alerts — sounds even in silent mode"
+                setBypassDnd(true)
+                setSound(
+                    Settings.System.DEFAULT_ALARM_ALERT_URI,
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                enableVibration(true)
+            }
+        )
+
+        manager.createNotificationChannel(
+            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_COOK_STATUS, "Cook Status", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Ongoing notification while a cook is active — shows temp, timer, and controls"
+            }
+        )
+
+        manager.createNotificationChannel(
+            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALERTS, "Anova Events", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Cook finished, device offline, and other event notifications"
+            }
+        )
+
+        manager.createNotificationChannel(
+            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_SERVICE, "Background Monitor", NotificationManager.IMPORTANCE_MIN).apply {
+                description = "Required for background device monitoring"
             }
         )
     }

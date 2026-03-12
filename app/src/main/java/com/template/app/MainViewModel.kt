@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.template.app.anova.AnovaSettings
 import com.template.app.logging.AppLogger
 import com.template.app.logging.DebugSettings
 import com.template.app.update.AppUpdateManager
@@ -13,8 +14,10 @@ import com.template.app.update.UpdateInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -30,8 +33,13 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     private val updateManager: AppUpdateManager,
     private val debugSettings: DebugSettings,
+    private val anovaSettings: AnovaSettings,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+
+    /** "DARK" | "LIGHT" | "SYSTEM" — drives AnovaTheme in MainActivity. */
+    val appTheme: StateFlow<String> = anovaSettings.appTheme
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "DARK")
 
     sealed class UpdatePromptState {
         object None : UpdatePromptState()

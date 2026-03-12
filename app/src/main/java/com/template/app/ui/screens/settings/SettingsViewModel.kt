@@ -6,6 +6,8 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.template.app.anova.AnovaSettings
+import com.template.app.anova.cloud.AnovaFirebaseAuth
 import com.template.app.backup.AnovaBackupManager
 import com.template.app.bugreport.GitHubIssuesClient
 import com.template.app.logging.AppLogger
@@ -36,6 +38,7 @@ import javax.inject.Inject
  * - **App update state machine** — Idle → Checking → Available/UpToDate → Downloading → Install
  * - **Backup export state machine** — Idle → Exporting → Done/Error
  * - **Backup restore state machine** — Idle → Restoring → Done/Error
+ * - **Anova device settings** — temp unit, theme, history, alerts
  *
  * ## Backup integration
  * The backup export ([exportBackupToUri]) and restore ([restoreFromBackup]) methods contain
@@ -58,6 +61,8 @@ class SettingsViewModel @Inject constructor(
     private val secureKeyManager: SecureKeyManager,
     private val updateManager: AppUpdateManager,
     private val backupManager: AnovaBackupManager,
+    private val anovaSettings: AnovaSettings,
+    private val firebaseAuth: AnovaFirebaseAuth,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -278,6 +283,35 @@ class SettingsViewModel @Inject constructor(
     fun resetRestoreState() {
         _restoreState.value = RestoreState.Idle
     }
+
+    // ── Anova device settings ─────────────────────────────────────────────────
+
+    val tempUnitCelsius: StateFlow<Boolean> = anovaSettings.tempUnitCelsius
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val appTheme: StateFlow<String> = anovaSettings.appTheme
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "DARK")
+    val historySampleMs: StateFlow<Long> = anovaSettings.historySampleMs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_HISTORY_SAMPLE_MS)
+    val historyRetentionDays: StateFlow<Int> = anovaSettings.historyRetentionDays
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_HISTORY_RETENTION_DAYS)
+    val alertCookFinished: StateFlow<Boolean>   = anovaSettings.alertCookFinished.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val alertTempTarget: StateFlow<Boolean>     = anovaSettings.alertTempTarget.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val alertDeviceOffline: StateFlow<Boolean>  = anovaSettings.alertDeviceOffline.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val alertScheduleFailed: StateFlow<Boolean> = anovaSettings.alertScheduleFailed.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val alertCookStarted: StateFlow<Boolean>    = anovaSettings.alertCookStarted.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val anovaJwtExpiryMs: Long get() = firebaseAuth.anovaJwtExpiryMs
+    val anovaStoredEmail: String? get() = firebaseAuth.storedEmail
+
+    fun setTempUnitCelsius(v: Boolean) = viewModelScope.launch { anovaSettings.setTempUnitCelsius(v) }
+    fun setAppTheme(t: String)         = viewModelScope.launch { anovaSettings.setAppTheme(t) }
+    fun setHistorySampleMs(ms: Long)   = viewModelScope.launch { anovaSettings.setHistorySampleMs(ms) }
+    fun setHistoryRetentionDays(d: Int)= viewModelScope.launch { anovaSettings.setHistoryRetentionDays(d) }
+    fun setAlertCookFinished(v: Boolean)   = viewModelScope.launch { anovaSettings.setAlertCookFinished(v) }
+    fun setAlertTempTarget(v: Boolean)     = viewModelScope.launch { anovaSettings.setAlertTempTarget(v) }
+    fun setAlertDeviceOffline(v: Boolean)  = viewModelScope.launch { anovaSettings.setAlertDeviceOffline(v) }
+    fun setAlertScheduleFailed(v: Boolean) = viewModelScope.launch { anovaSettings.setAlertScheduleFailed(v) }
+    fun setAlertCookStarted(v: Boolean)    = viewModelScope.launch { anovaSettings.setAlertCookStarted(v) }
 
     companion object {
         private const val TAG = "SettingsViewModel"

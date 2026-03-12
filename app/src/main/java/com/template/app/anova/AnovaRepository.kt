@@ -1,10 +1,16 @@
 package com.template.app.anova
 
+import android.content.Context
+import android.content.Intent
 import com.template.app.anova.cloud.AnovaCloudTransport
 import com.template.app.history.TemperatureReading
 import com.template.app.history.TemperatureReadingDao
 import com.template.app.logging.AppLogger
+import com.template.app.notifications.AnovaAlertManager
 import com.template.app.security.SecureKeyManager
+import com.template.app.service.AnovaMonitorService
+import com.template.app.widget.AnovaWidgetReceiver
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,15 +24,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import androidx.glance.appwidget.updateAll
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "AnovaRepo"
 private const val AUTO_WIFI_TIMEOUT_MS = 6_000L
-private val HISTORY_MAX_AGE_MS = TimeUnit.DAYS.toMillis(30)
 
-/** Which physical transport is currently driving the connection. */
 enum class ActiveTransport { BLUETOOTH, LOCAL_WIFI, CLOUD, NONE }
 
 @Singleton
@@ -36,7 +41,9 @@ class AnovaRepository @Inject constructor(
     val cloudTransport: AnovaCloudTransport,
     private val settings: AnovaSettings,
     private val readingDao: TemperatureReadingDao,
-    private val secureKeyManager: SecureKeyManager
+    private val secureKeyManager: SecureKeyManager,
+    private val alertManager: AnovaAlertManager,
+    @ApplicationContext private val context: Context
 ) {
     companion object {
         const val KEY_CLOUD_PASSWORD = "anova_cloud_password"
@@ -49,122 +56,123 @@ class AnovaRepository @Inject constructor(
     val activeTransport: StateFlow<ActiveTransport> = _activeTransport.asStateFlow()
 
     private var pollingJob: Job? = null
-    private var currentPollIntervalMs = AnovaSettings.DEFAULT_LOCAL_POLL_MS
+    private var currentPollIntervalMs = AnovaSettings.DEFAULT_REMOTE_POLL_MS
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Alert de-dup state
+    private var minAlertFired = false
+    private var maxAlertFired = false
+    private var prevStatus = AnovaStatus.UNKNOWN
+    private var lastHistorySampleMs = 0L
 
     init {
         observeTransport(bleTransport, ActiveTransport.BLUETOOTH)
         observeTransport(wifiTransport, ActiveTransport.LOCAL_WIFI)
         observeTransport(cloudTransport, ActiveTransport.CLOUD)
         observeCloudErrors()
+        observeCloudPushes()
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Public API
-    // -----------------------------------------------------------------------------------------
+    // ── Public API ────────────────────────────────────────────────────────────
 
     fun connect() {
         scope.launch {
             _deviceState.update { it.copy(connectionError = null) }
-            val mode = settings.connectionMode.first()
-            val ip = settings.localWifiIp.first()
-            val email = settings.cloudEmail.first()
+            val mode     = settings.connectionMode.first()
+            val ip       = settings.localWifiIp.first()
+            val email    = settings.cloudEmail.first()
             val password = secureKeyManager.getKey(KEY_CLOUD_PASSWORD) ?: ""
-            val localMs = settings.localPollMs.first()
+            val localMs  = settings.localPollMs.first()
             val remoteMs = settings.remotePollMs.first()
 
+            settings.setAutoReconnectOnBoot(true)
             when (mode) {
-                ConnectionMode.BLUETOOTH -> {
-                    currentPollIntervalMs = localMs
-                    _activeTransport.value = ActiveTransport.BLUETOOTH
-                    bleTransport.connect()
-                }
-                ConnectionMode.LOCAL_WIFI -> {
-                    currentPollIntervalMs = localMs
-                    val resolvedIp = if (ip.isBlank()) {
-                        _deviceState.update { it.copy(connectionState = ConnectionState.SCANNING, connectionError = null) }
-                        AppLogger.i(TAG, "LOCAL_WIFI: no IP configured, scanning local network…")
-                        val found = wifiTransport.discoverDevice()
-                        if (found == null) {
-                            _deviceState.update {
-                                it.copy(
-                                    connectionState = ConnectionState.DISCONNECTED,
-                                    connectionError = "No Anova device found on this network. Make sure the cooker is powered on and connected to the same Wi-Fi network."
-                                )
-                            }
-                            return@launch
-                        }
-                        settings.setLocalWifiIp(found)
-                        found
-                    } else ip
-                    _activeTransport.value = ActiveTransport.LOCAL_WIFI
-                    wifiTransport.connect(resolvedIp)
-                }
-                ConnectionMode.CLOUD -> {
-                    currentPollIntervalMs = remoteMs
-                    _activeTransport.value = ActiveTransport.CLOUD
-                    cloudTransport.setCredentials(email, password)
-                    cloudTransport.connect()
-                }
-                ConnectionMode.AUTO -> connectAuto(ip, email, password, localMs, remoteMs)
+                ConnectionMode.BLUETOOTH  -> { currentPollIntervalMs = localMs; _activeTransport.value = ActiveTransport.BLUETOOTH; bleTransport.connect() }
+                ConnectionMode.LOCAL_WIFI -> connectWifi(ip, localMs)
+                ConnectionMode.CLOUD      -> connectCloud(email, password, remoteMs)
+                ConnectionMode.AUTO       -> connectAuto(ip, email, password, localMs, remoteMs)
             }
+            startService()
         }
     }
 
     fun disconnect() {
+        scope.launch { settings.setAutoReconnectOnBoot(false) }
         stopPolling()
         bleTransport.disconnect()
         wifiTransport.disconnect()
         cloudTransport.disconnect()
         _activeTransport.value = ActiveTransport.NONE
         _deviceState.update { it.copy(connectionState = ConnectionState.DISCONNECTED) }
+        alertManager.cancelCookNotification()
+        stopService()
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Auto-fallback logic
-    // -----------------------------------------------------------------------------------------
-
-    /** Scans the local network for an Anova device and returns its IP, or null if not found. */
+    fun setGoogleToken(token: String) = cloudTransport.setGoogleIdToken(token)
+    fun useGoogleSsoSession()          = cloudTransport.useGoogleSsoSession()
     suspend fun discoverDevice(): String? = wifiTransport.discoverDevice()
 
-    /** Use a Google ID token (from CredentialManager) for cloud auth instead of email/password. */
-    fun setGoogleToken(googleIdToken: String) {
-        cloudTransport.setGoogleIdToken(googleIdToken)
+    // ── Control ───────────────────────────────────────────────────────────────
+
+    suspend fun startCook(): Boolean = cloudTransport.startCook()
+
+    suspend fun stopCook(): Boolean {
+        val ok = cloudTransport.stopCook()
+        if (ok) {
+            _deviceState.update { it.copy(status = AnovaStatus.STOPPED) }
+            alertManager.cancelCookNotification()
+        }
+        return ok
     }
 
-    /**
-     * Call after a browser-based Google sign-in has cached the Firebase token.
-     * Switches the cloud transport to use the cached token (no re-sign-in needed).
-     */
-    fun useGoogleSsoSession() {
-        cloudTransport.useGoogleSsoSession()
+    suspend fun updateCook(targetTemp: Float? = null, timerSeconds: Int? = null): Boolean =
+        cloudTransport.updateCook(targetTemp, timerSeconds)
+
+    /** Add 1 hour to the current timer. */
+    suspend fun addHour(): Boolean {
+        val currentMin = _deviceState.value.timerMinutes ?: return false
+        val newSeconds = (currentMin + 60) * 60
+        return cloudTransport.updateCook(timerSeconds = newSeconds)
     }
 
-    private suspend fun connectAuto(
-        ip: String,
-        email: String,
-        password: String,
-        localMs: Long,
-        remoteMs: Long
-    ) {
+    // ── Connection helpers ────────────────────────────────────────────────────
+
+    private suspend fun connectWifi(ip: String, localMs: Long) {
+        currentPollIntervalMs = localMs
         val resolvedIp = if (ip.isBlank()) {
-            AppLogger.i(TAG, "AUTO: no local IP configured, scanning…")
-            _deviceState.update { it.copy(connectionState = ConnectionState.SCANNING, connectionError = null) }
+            _deviceState.update { it.copy(connectionState = ConnectionState.SCANNING) }
             val found = wifiTransport.discoverDevice()
-            if (found != null) {
-                AppLogger.i(TAG, "AUTO: found Anova at $found")
-                settings.setLocalWifiIp(found)
+            if (found == null) {
+                _deviceState.update { it.copy(connectionState = ConnectionState.DISCONNECTED, connectionError = "No Anova device found on this network.") }
+                return
             }
+            settings.setLocalWifiIp(found); found
+        } else ip
+        _activeTransport.value = ActiveTransport.LOCAL_WIFI
+        wifiTransport.connect(resolvedIp)
+    }
+
+    private fun connectCloud(email: String, password: String, remoteMs: Long) {
+        currentPollIntervalMs = remoteMs
+        _activeTransport.value = ActiveTransport.CLOUD
+        cloudTransport.setCredentials(email, password)
+        cloudTransport.connect()
+    }
+
+    private suspend fun connectAuto(ip: String, email: String, password: String, localMs: Long, remoteMs: Long) {
+        val resolvedIp = if (ip.isBlank()) {
+            _deviceState.update { it.copy(connectionState = ConnectionState.SCANNING) }
+            val found = wifiTransport.discoverDevice()
+            if (found != null) settings.setLocalWifiIp(found)
             found
         } else ip
 
         if (resolvedIp.isNullOrBlank()) {
-            AppLogger.i(TAG, "AUTO: no Anova on local network, falling back to cloud")
+            AppLogger.i(TAG, "AUTO: no local device, falling back to cloud")
             switchToCloud(email, password, remoteMs)
             return
         }
 
-        AppLogger.i(TAG, "AUTO: trying local WiFi ($resolvedIp) with ${AUTO_WIFI_TIMEOUT_MS}ms timeout…")
         currentPollIntervalMs = localMs
         _activeTransport.value = ActiveTransport.LOCAL_WIFI
         wifiTransport.connect(resolvedIp)
@@ -172,25 +180,20 @@ class AnovaRepository @Inject constructor(
         val connected = withTimeoutOrNull(AUTO_WIFI_TIMEOUT_MS) {
             wifiTransport.connectionState.first { it == ConnectionState.CONNECTED }
         }
-
         if (connected == null) {
-            AppLogger.i(TAG, "AUTO: local WiFi timed out → falling back to cloud")
             wifiTransport.disconnect()
             _activeTransport.value = ActiveTransport.NONE
             switchToCloud(email, password, remoteMs)
         }
-        // If local connected: the observeTransport collector handles the rest
     }
 
     private fun switchToCloud(email: String, password: String, remoteMs: Long) {
-        if (email.isBlank() || password.isBlank()) {
-            AppLogger.e(TAG, "Cloud fallback failed: no cloud credentials configured")
-            _deviceState.update {
-                it.copy(
-                    connectionState = ConnectionState.DISCONNECTED,
-                    connectionError = "No cloud credentials configured. Tap 'Configure connection' to enter your Anova account details."
-                )
-            }
+        if (email.isBlank()) {
+            // Try stored session (Anova JWT / Google SSO)
+            currentPollIntervalMs = remoteMs
+            _activeTransport.value = ActiveTransport.CLOUD
+            cloudTransport.useGoogleSsoSession()
+            cloudTransport.connect()
             return
         }
         currentPollIntervalMs = remoteMs
@@ -199,43 +202,32 @@ class AnovaRepository @Inject constructor(
         cloudTransport.connect()
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Transport observation
-    // -----------------------------------------------------------------------------------------
+    // ── Transport observation ─────────────────────────────────────────────────
 
     private fun observeTransport(transport: AnovaTransport, type: ActiveTransport) {
         scope.launch {
-            try {
-                transport.connectionState.collect { state ->
-                    if (_activeTransport.value != type) return@collect
-                    AppLogger.d(TAG, "$type state → $state")
-                    _deviceState.update { it.copy(connectionState = state) }
-                    when (state) {
-                        ConnectionState.CONNECTED -> {
-                            _deviceState.update { it.copy(connectionError = null) }
-                            purgeOldHistory()
-                            startPolling()
+            transport.connectionState.collect { state ->
+                if (_activeTransport.value != type) return@collect
+                AppLogger.d(TAG, "$type → $state")
+                _deviceState.update { it.copy(connectionState = state) }
+                when (state) {
+                    ConnectionState.CONNECTED    -> { _deviceState.update { it.copy(connectionError = null) }; purgeOldHistory(); startPolling() }
+                    ConnectionState.DISCONNECTED -> {
+                        stopPolling()
+                        val wasRunning = _deviceState.value.status == AnovaStatus.RUNNING
+                        _deviceState.update { it.copy(currentTemp = null, targetTemp = null, timerMinutes = null, status = AnovaStatus.UNKNOWN) }
+                        alertManager.cancelCookNotification()
+                        if (wasRunning) checkAlert(settings.alertDeviceOffline) {
+                            alertManager.postEventAlert("Anova offline", "Lost connection to your device.", AnovaAlertManager.NOTIFICATION_ID_OFFLINE)
                         }
-                        ConnectionState.DISCONNECTED -> {
-                            stopPolling()
-                            _deviceState.update {
-                                it.copy(currentTemp = null, timerMinutes = null, status = AnovaStatus.UNKNOWN)
-                            }
-                        }
-                        else -> Unit
                     }
+                    else -> Unit
                 }
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "observeTransport($type) collector crashed: ${e.message}")
             }
         }
         scope.launch {
-            try {
-                transport.deviceName.collect { name ->
-                    if (_activeTransport.value == type) _deviceState.update { it.copy(deviceName = name) }
-                }
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "observeTransport($type) deviceName collector crashed: ${e.message}")
+            transport.deviceName.collect { name ->
+                if (_activeTransport.value == type) _deviceState.update { it.copy(deviceName = name) }
             }
         }
     }
@@ -250,9 +242,18 @@ class AnovaRepository @Inject constructor(
         }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Polling
-    // -----------------------------------------------------------------------------------------
+    /** Observe real-time WebSocket pushes from the cloud transport. */
+    private fun observeCloudPushes() {
+        scope.launch {
+            cloudTransport.rawStateFlow?.collect { raw ->
+                if (_activeTransport.value == ActiveTransport.CLOUD) {
+                    applyRawState(raw)
+                }
+            }
+        }
+    }
+
+    // ── Polling ───────────────────────────────────────────────────────────────
 
     private fun startPolling() {
         pollingJob?.cancel()
@@ -268,43 +269,138 @@ class AnovaRepository @Inject constructor(
 
     private suspend fun poll() {
         val transport: AnovaTransport = when (_activeTransport.value) {
-            ActiveTransport.BLUETOOTH -> bleTransport
+            ActiveTransport.BLUETOOTH  -> bleTransport
             ActiveTransport.LOCAL_WIFI -> wifiTransport
-            ActiveTransport.CLOUD -> cloudTransport
-            ActiveTransport.NONE -> return
+            ActiveTransport.CLOUD      -> cloudTransport
+            ActiveTransport.NONE       -> return
         }
         try {
             val raw = transport.poll() ?: return
-            _deviceState.update {
-                it.copy(
-                    currentTemp = raw.currentTemp,
-                    unit = raw.unit,
-                    timerMinutes = raw.timerMinutes,
-                    status = raw.status,
-                    lastUpdated = System.currentTimeMillis()
-                )
-            }
-            if (raw.currentTemp != null) {
-                readingDao.insert(
-                    TemperatureReading(
-                        timestamp = System.currentTimeMillis(),
-                        temperature = raw.currentTemp,
-                        unit = raw.unit.name,
-                        status = raw.status.name.lowercase(),
-                        timerMinutes = raw.timerMinutes
-                    )
-                )
-            }
+            applyRawState(raw)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Poll error: ${e.message}")
         }
     }
 
+    private fun applyRawState(raw: AnovaRawState) {
+        val prev = _deviceState.value
+        _deviceState.update {
+            it.copy(
+                currentTemp  = raw.currentTemp,
+                targetTemp   = raw.targetTemp,
+                unit         = raw.unit,
+                timerMinutes = raw.timerMinutes,
+                status       = raw.status,
+                lastUpdated  = System.currentTimeMillis()
+            )
+        }
+        checkAlerts(prev, raw)
+        maybeLogHistory(raw)
+        updateCookNotification(raw)
+        scope.launch { AnovaWidgetReceiver().glanceAppWidget.updateAll(context) }
+    }
+
+    // ── Alerts ────────────────────────────────────────────────────────────────
+
+    private fun checkAlerts(prev: AnovaDeviceState, raw: AnovaRawState) {
+        val temp = raw.currentTemp ?: return
+
+        // Threshold alerts — these use the caller's thresholds from AnovaViewModel;
+        // handled in AnovaViewModel.checkThresholds(). Here we handle event alerts.
+
+        // Cook finished: was running, now stopped, timer was counting
+        if (prev.status == AnovaStatus.RUNNING && raw.status == AnovaStatus.STOPPED) {
+            checkAlert(settings.alertCookFinished) {
+                alertManager.postEventAlert("Cook finished", "Your Anova cook has completed.", AnovaAlertManager.NOTIFICATION_ID_COOK_DONE)
+            }
+            alertManager.cancelCookNotification()
+        }
+
+        // Cook started remotely: was not running, now running
+        if (prev.status != AnovaStatus.RUNNING && raw.status == AnovaStatus.RUNNING && prevStatus != AnovaStatus.UNKNOWN) {
+            checkAlert(settings.alertCookStarted) {
+                alertManager.postEventAlert("Cook started", "Your Anova device started a cook.", AnovaAlertManager.NOTIFICATION_ID_COOK_START)
+            }
+        }
+
+        // Temperature reached target
+        val target = raw.targetTemp
+        if (target != null && prev.currentTemp != null && raw.currentTemp != null) {
+            val reachedNow = raw.currentTemp >= target - 0.3f
+            val wasBelow = prev.currentTemp < target - 0.3f
+            if (wasBelow && reachedNow) {
+                checkAlert(settings.alertTempTarget) {
+                    alertManager.postEventAlert(
+                        "Target temperature reached",
+                        "%.1f%s — ready!".format(raw.currentTemp, raw.unit.symbol),
+                        AnovaAlertManager.NOTIFICATION_ID_TEMP_TARGET
+                    )
+                }
+            }
+        }
+
+        prevStatus = raw.status
+    }
+
+    private fun checkAlert(settingFlow: kotlinx.coroutines.flow.Flow<Boolean>, action: () -> Unit) {
+        scope.launch {
+            if (settingFlow.first()) action()
+        }
+    }
+
+    private fun updateCookNotification(raw: AnovaRawState) {
+        if (raw.status == AnovaStatus.RUNNING) {
+            alertManager.updateCookNotification(raw.currentTemp, raw.targetTemp, raw.timerMinutes, raw.unit.symbol)
+        }
+    }
+
+    // ── History ───────────────────────────────────────────────────────────────
+
+    private fun maybeLogHistory(raw: AnovaRawState) {
+        val temp = raw.currentTemp ?: return
+        scope.launch {
+            val sampleIntervalMs = settings.historySampleMs.first()
+            val now = System.currentTimeMillis()
+            if (now - lastHistorySampleMs < sampleIntervalMs) return@launch
+            lastHistorySampleMs = now
+            readingDao.insert(
+                TemperatureReading(
+                    timestamp    = now,
+                    temperature  = temp,
+                    unit         = raw.unit.name,
+                    status       = raw.status.name.lowercase(),
+                    timerMinutes = raw.timerMinutes
+                )
+            )
+        }
+    }
+
     private suspend fun purgeOldHistory() {
         try {
-            readingDao.deleteOlderThan(System.currentTimeMillis() - HISTORY_MAX_AGE_MS)
+            val retentionDays = settings.historyRetentionDays.first()
+            val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(retentionDays.toLong())
+            readingDao.deleteOlderThan(cutoff)
         } catch (e: Exception) {
-            AppLogger.e(TAG, "Failed to purge old history: ${e.message}")
+            AppLogger.e(TAG, "History purge error: ${e.message}")
+        }
+    }
+
+    // ── Foreground service ────────────────────────────────────────────────────
+
+    private fun startService() {
+        try {
+            val intent = Intent(context, AnovaMonitorService::class.java)
+            context.startForegroundService(intent)
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not start foreground service: ${e.message}")
+        }
+    }
+
+    private fun stopService() {
+        try {
+            context.stopService(Intent(context, AnovaMonitorService::class.java))
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not stop service: ${e.message}")
         }
     }
 }

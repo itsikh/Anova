@@ -36,6 +36,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,6 +76,7 @@ import java.util.Locale
  * ## Sections
  * | Section | Purpose |
  * |---------|---------|
+ * | **Anova Device** | Temp unit, app theme, history settings, alert toggles |
  * | **GitHub Token** | Configure the PAT used for bug reports and update checks |
  * | **Auto-Update** | Check for and install a new release from GitHub Releases |
  * | **Backup** | Export all data to any storage (local / Google Drive / Dropbox) and restore |
@@ -159,6 +161,102 @@ fun SettingsScreen(
                 onDetailedLoggingToggle = { viewModel.setDetailedLogging(it) },
                 onShowBugButtonToggle = { viewModel.setShowBugButton(it) }
             ) {
+
+                // ── Anova Device ──────────────────────────────────────────────
+                SectionHeader("Anova Device")
+                Spacer(Modifier.height(8.dp))
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+
+                        // Account info
+                        val expiryMs   = viewModel.anovaJwtExpiryMs
+                        val email      = viewModel.anovaStoredEmail
+                        val daysLeft   = ((expiryMs - System.currentTimeMillis()) / 86_400_000L).toInt()
+                        val expiryColor = when {
+                            expiryMs == 0L -> MaterialTheme.colorScheme.onSurfaceVariant
+                            daysLeft < 30  -> MaterialTheme.colorScheme.error
+                            daysLeft < 90  -> MaterialTheme.colorScheme.tertiary
+                            else           -> MaterialTheme.colorScheme.tertiary
+                        }
+                        if (email != null) {
+                            Text("Signed in: $email", style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (expiryMs > 0L) {
+                            Text(
+                                if (daysLeft > 0) "Session valid: $daysLeft days remaining"
+                                else "Session expired — re-authenticate",
+                                style = MaterialTheme.typography.bodySmall, color = expiryColor
+                            )
+                        }
+
+                        // Temperature unit
+                        val tempCelsius by viewModel.tempUnitCelsius.collectAsState()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Temperature Unit", style = MaterialTheme.typography.bodyLarge)
+                                Text(if (tempCelsius) "Celsius (°C)" else "Fahrenheit (°F)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = tempCelsius, onCheckedChange = { viewModel.setTempUnitCelsius(it) })
+                        }
+
+                        HorizontalDivider()
+
+                        // App theme
+                        val appTheme by viewModel.appTheme.collectAsState()
+                        Text("App Theme", style = MaterialTheme.typography.labelLarge)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("DARK", "LIGHT", "SYSTEM").forEach { t ->
+                                FilterChip(
+                                    selected = appTheme == t,
+                                    onClick = { viewModel.setAppTheme(t) },
+                                    label = { Text(t.lowercase().replaceFirstChar { it.uppercase() }) }
+                                )
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        // History sample interval
+                        val sampleMs by viewModel.historySampleMs.collectAsState()
+                        Text("History Sample Interval", style = MaterialTheme.typography.labelLarge)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf(60_000L to "1m", 300_000L to "5m", 1_800_000L to "30m", 3_600_000L to "1h").forEach { (ms, label) ->
+                                FilterChip(selected = sampleMs == ms, onClick = { viewModel.setHistorySampleMs(ms) },
+                                    label = { Text(label) })
+                            }
+                        }
+
+                        // History retention
+                        val retentionDays by viewModel.historyRetentionDays.collectAsState()
+                        Text("History Retention", style = MaterialTheme.typography.labelLarge)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf(7, 14, 30, 60, 90).forEach { d ->
+                                FilterChip(selected = retentionDays == d, onClick = { viewModel.setHistoryRetentionDays(d) },
+                                    label = { Text("${d}d") })
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        // Alert toggles
+                        Text("Alert Events", style = MaterialTheme.typography.labelLarge)
+                        val alertCookFinished   by viewModel.alertCookFinished.collectAsState()
+                        val alertTempTarget     by viewModel.alertTempTarget.collectAsState()
+                        val alertDeviceOffline  by viewModel.alertDeviceOffline.collectAsState()
+                        val alertScheduleFailed by viewModel.alertScheduleFailed.collectAsState()
+                        val alertCookStarted    by viewModel.alertCookStarted.collectAsState()
+
+                        AlertToggleRow("Cook finished",           alertCookFinished,   { viewModel.setAlertCookFinished(it) })
+                        AlertToggleRow("Temperature at target",   alertTempTarget,     { viewModel.setAlertTempTarget(it) })
+                        AlertToggleRow("Device offline",          alertDeviceOffline,  { viewModel.setAlertDeviceOffline(it) })
+                        AlertToggleRow("Scheduled command failed",alertScheduleFailed, { viewModel.setAlertScheduleFailed(it) })
+                        AlertToggleRow("Cook started remotely",   alertCookStarted,    { viewModel.setAlertCookStarted(it) })
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
 
                 // ── GitHub Token ──────────────────────────────────────────────
                 SectionHeader("GitHub Token")
@@ -566,5 +664,13 @@ fun SettingsScreen(
                 TextButton(onClick = { showClearLogsDialog = false }) { Text("Cancel") }
             }
         )
+    }
+}
+
+@Composable
+private fun AlertToggleRow(label: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onToggle)
     }
 }

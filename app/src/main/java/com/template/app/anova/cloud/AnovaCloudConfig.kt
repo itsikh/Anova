@@ -1,14 +1,6 @@
 package com.template.app.anova.cloud
 
-/**
- * Constants for Anova's unofficial cloud API.
- *
- * These were reverse-engineered from the official Anova app's network traffic by
- * the open-source community (projects: anova-wifi, py-anova-cooker, homebridge-anova).
- * Anova can change or revoke these endpoints at any time without notice.
- */
 object AnovaCloudConfig {
-    // Firebase project API key used by the official Anova app
     const val FIREBASE_API_KEY = "AIzaSyDQiOP2fTR9zvFcag2kSbcmG9zPh6gZhHw"
 
     const val FIREBASE_SIGN_IN_URL =
@@ -18,22 +10,16 @@ object AnovaCloudConfig {
     const val FIREBASE_REFRESH_URL =
         "https://securetoken.googleapis.com/v1/token?key=$FIREBASE_API_KEY"
 
-    /**
-     * Web client ID registered for the Anova Firebase project (used in Google OAuth URL).
-     * Discovered via the Firebase createAuthUri endpoint.
-     */
     const val FIREBASE_WEB_CLIENT_ID =
         "322173998509-vsa6hecaqqp5cjsaja9h3cds1bhgrq3f.apps.googleusercontent.com"
-
-    /** Firebase auth handler host — we intercept WebView navigation to this host. */
     const val FIREBASE_AUTH_HANDLER_HOST = "anova-app.firebaseapp.com"
+    const val FIREBASE_AUTH_HANDLER_URL  = "https://anova-app.firebaseapp.com/__/auth/handler"
 
-    /** Full Firebase auth handler URL — used as OAuth redirect_uri. */
-    const val FIREBASE_AUTH_HANDLER_URL =
-        "https://anova-app.firebaseapp.com/__/auth/handler"
+    const val ANOVA_AUTH_URL = "https://anovaculinary.io/authenticate"
+    const val ANOVA_WS_BASE  = "wss://devices.anovaculinary.io/"
 
-    const val ANOVA_BASE_URL = "https://oven.anovaculinary.com"
-
-    // Refresh the token 5 minutes before it actually expires to avoid mid-poll failures
+    // Refresh Firebase ID token 5 min before expiry
     const val TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1000L
+    // Refresh Anova JWT when fewer than 90 days remain
+    const val ANOVA_JWT_REFRESH_THRESHOLD_MS = 90L * 24 * 60 * 60 * 1000
 }

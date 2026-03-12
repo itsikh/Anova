@@ -22,6 +22,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,192 +53,143 @@ fun ConnectionSettingsDialog(
     onScanClick: (() -> Unit)? = null,
     onGoogleSignInClick: (() -> Unit)? = null,
     googleSignedInAs: String? = null,
+    onSeedRefreshToken: ((token: String, email: String?) -> Unit)? = null,
     onSave: (ip: String, email: String, password: String, localMs: Long, remoteMs: Long) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val needsWifi  = mode == ConnectionMode.LOCAL_WIFI  // LOCAL_WIFI hidden from UI; section kept for completeness
     val needsCloud = mode == ConnectionMode.CLOUD || mode == ConnectionMode.AUTO
 
-    var ip by remember { mutableStateOf(currentIp) }
-    var email by remember { mutableStateOf(currentEmail) }
-    var password by remember { mutableStateOf("") }  // never pre-fill password
-    var showPassword by remember { mutableStateOf(false) }
-    var localPollSec by remember { mutableStateOf((currentLocalPollMs / 1000).toString()) }
+    var ip            by remember { mutableStateOf(currentIp) }
+    var email         by remember { mutableStateOf(currentEmail) }
+    var password      by remember { mutableStateOf("") }
+    var showPassword  by remember { mutableStateOf(false) }
     var remotePollSec by remember { mutableStateOf((currentRemotePollMs / 1000).toString()) }
 
-    // Auto-populate IP field when a scan completes
-    LaunchedEffect(scannedIp) {
-        if (scannedIp != null) ip = scannedIp
-    }
+    // Refresh token paste section
+    var showTokenSection  by remember { mutableStateOf(false) }
+    var refreshTokenInput by remember { mutableStateOf("") }
+    var tokenEmail        by remember { mutableStateOf("") }
+
+    LaunchedEffect(scannedIp) { if (scannedIp != null) ip = scannedIp }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Connection Settings") },
         text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // ---- Local WiFi section ----
-                if (needsWifi) {
-                    SectionHeader("Local Wi-Fi (same network)")
-                    OutlinedTextField(
-                        value = ip,
-                        onValueChange = { ip = it },
-                        label = { Text("Device IP address") },
-                        placeholder = { Text("e.g. 192.168.1.42") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.fillMaxWidth(),
-                        trailingIcon = {
-                            if (onScanClick != null) {
-                                if (isScanning) {
-                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                } else {
-                                    IconButton(onClick = onScanClick) {
-                                        Icon(Icons.Default.Search, contentDescription = "Scan for device")
-                                    }
-                                }
-                            }
-                        }
-                    )
-                    if (isScanning) {
-                        Text(
-                            "Scanning local network for Anova device…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    OutlinedTextField(
-                        value = localPollSec,
-                        onValueChange = { localPollSec = it },
-                        label = { Text("Poll interval (seconds)") },
-                        placeholder = { Text("Default: ${AnovaSettings.DEFAULT_LOCAL_POLL_MS / 1000}") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
-                if (needsWifi && needsCloud) HorizontalDivider()
-
-                // ---- Cloud section ----
                 if (needsCloud) {
                     SectionHeader("Cloud (remote access)")
 
-                    // Stability warning
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Warning,
-                                contentDescription = null,
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                        modifier = Modifier.fillMaxWidth()) {
+                        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.Warning, null,
                                 tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                            Text(
-                                "This uses an unofficial API reverse-engineered from the Anova app. " +
-                                "It may stop working if Anova changes their servers.",
+                                modifier = Modifier.padding(top = 2.dp))
+                            Text("Unofficial API — may change without notice.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
+                                color = MaterialTheme.colorScheme.onTertiaryContainer)
                         }
                     }
 
-                    // Google Sign-In option
+                    // Google Sign-In button
                     if (onGoogleSignInClick != null) {
                         if (googleSignedInAs != null) {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    "Signed in with Google as $googleSignedInAs",
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text("Signed in: $googleSignedInAs",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = androidx.compose.ui.Modifier.padding(10.dp)
-                                )
+                                    modifier = Modifier.padding(10.dp))
                             }
                         } else {
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = onGoogleSignInClick,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+                            OutlinedButton(onClick = onGoogleSignInClick, modifier = Modifier.fillMaxWidth()) {
                                 Text("Sign in with Google")
                             }
-                            Text(
-                                "— or use email/password below —",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = androidx.compose.ui.Modifier.align(Alignment.CenterHorizontally)
-                            )
                         }
                     }
 
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it },
-                        label = { Text("Anova account email") },
-                        singleLine = true,
+                    HorizontalDivider()
+
+                    // Email / password
+                    OutlinedTextField(value = email, onValueChange = { email = it },
+                        label = { Text("Anova account email") }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("Anova account password") },
+                        modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = password, onValueChange = { password = it },
+                        label = { Text("Password") },
                         placeholder = { Text("Leave blank to keep existing") },
                         singleLine = true,
                         visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         trailingIcon = {
                             IconButton(onClick = { showPassword = !showPassword }) {
-                                Icon(
-                                    if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (showPassword) "Hide" else "Show"
-                                )
+                                Icon(if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = null)
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = remotePollSec,
-                        onValueChange = { remotePollSec = it },
+                        }, modifier = Modifier.fillMaxWidth())
+
+                    OutlinedTextField(value = remotePollSec, onValueChange = { remotePollSec = it },
                         label = { Text("Poll interval (seconds)") },
                         placeholder = { Text("Default: ${AnovaSettings.DEFAULT_REMOTE_POLL_MS / 1000}") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth())
+
+                    HorizontalDivider()
+
+                    // Paste refresh token section
+                    TextButton(onClick = { showTokenSection = !showTokenSection },
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(if (showTokenSection) "▲ Hide manual token setup" else "▼ Manual token setup (advanced)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    if (showTokenSection && onSeedRefreshToken != null) {
+                        Text(
+                            "If Google sign-in doesn't work, authenticate via the Mac HTML page " +
+                            "(see docs/anova-token-management.md) and paste the Firebase refresh token here.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(value = refreshTokenInput, onValueChange = { refreshTokenInput = it },
+                            label = { Text("Firebase Refresh Token") }, singleLine = false, maxLines = 3,
+                            modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = tokenEmail, onValueChange = { tokenEmail = it },
+                            label = { Text("Account email (optional)") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            modifier = Modifier.fillMaxWidth())
+                        OutlinedButton(
+                            onClick = {
+                                if (refreshTokenInput.isNotBlank()) {
+                                    onSeedRefreshToken(refreshTokenInput.trim(), tokenEmail.trim().ifBlank { null })
+                                    refreshTokenInput = ""
+                                    tokenEmail = ""
+                                    showTokenSection = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = refreshTokenInput.isNotBlank()
+                        ) { Text("Save Token") }
+                    }
                 }
 
-                // Bluetooth — no extra settings needed
-                if (!needsWifi && !needsCloud) {
-                    Text(
-                        "Bluetooth mode requires no configuration. Tap Connect on the main screen to scan.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                if (!needsCloud) {
+                    Text("Cloud mode is recommended for the Anova Precision Cooker 3. Switch to Auto or Cloud mode above.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                val localMs  = (localPollSec.toLongOrNull()  ?: (AnovaSettings.DEFAULT_LOCAL_POLL_MS  / 1000)) * 1000
                 val remoteMs = (remotePollSec.toLongOrNull() ?: (AnovaSettings.DEFAULT_REMOTE_POLL_MS / 1000)) * 1000
-                onSave(ip.trim(), email.trim(), password, localMs, remoteMs)
+                onSave(ip.trim(), email.trim(), password, AnovaSettings.DEFAULT_LOCAL_POLL_MS, remoteMs)
                 onDismiss()
             }) { Text("Save") }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 

@@ -17,19 +17,9 @@ import com.template.app.ui.screens.bugreport.BugReportScreen
 import com.template.app.ui.screens.bugreport.ReportMode
 import com.template.app.ui.screens.history.HistoryScreen
 import com.template.app.ui.screens.monitor.MonitorScreen
+import com.template.app.ui.screens.schedule.ScheduleScreen
 import com.template.app.ui.screens.settings.SettingsScreen
 
-/**
- * Root navigation graph.
- *
- * Routes:
- * | Route            | Screen          |
- * |------------------|-----------------|
- * | `monitor`        | [MonitorScreen] — start destination, shows live Anova data |
- * | `history`        | [HistoryScreen] — temperature history chart + list          |
- * | `settings`       | [SettingsScreen]                                            |
- * | `bug_report/{mode}` | [BugReportScreen]                                      |
- */
 @Composable
 fun AppNavHost() {
     val navController = rememberNavController()
@@ -40,34 +30,30 @@ fun AppNavHost() {
         NavHost(navController = navController, startDestination = "monitor") {
             composable("monitor") {
                 MonitorScreen(
-                    onOpenSettings = { navController.navigate("settings") },
-                    onOpenHistory = { navController.navigate("history") }
+                    onOpenSettings  = { navController.navigate("settings") },
+                    onOpenHistory   = { navController.navigate("history") },
+                    onOpenSchedule  = { navController.navigate("schedule") }
                 )
             }
             composable("history") {
-                HistoryScreen(
-                    onBack = { navController.popBackStack() }
-                )
+                HistoryScreen(onBack = { navController.popBackStack() })
+            }
+            composable("schedule") {
+                ScheduleScreen(onBack = { navController.popBackStack() })
             }
             composable("settings") {
                 SettingsScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenBugReport = { mode ->
-                        navController.navigate("bug_report/${mode.name}")
-                    }
+                    onOpenBugReport = { mode -> navController.navigate("bug_report/${mode.name}") }
                 )
             }
             composable("bug_report/{mode}") { backStackEntry ->
-                val modeName = backStackEntry.arguments?.getString("mode")
-                val mode = modeName?.let { runCatching { ReportMode.valueOf(it) }.getOrNull() }
+                val mode = backStackEntry.arguments?.getString("mode")
+                    ?.let { runCatching { ReportMode.valueOf(it) }.getOrNull() }
                     ?: ReportMode.BUG_REPORT
-                BugReportScreen(
-                    mode = mode,
-                    onBack = { navController.popBackStack() }
-                )
+                BugReportScreen(mode = mode, onBack = { navController.popBackStack() })
             }
         }
-
         FloatingBugButton(
             visible = showBugButton,
             onScreenshotCaptured = { bitmap ->

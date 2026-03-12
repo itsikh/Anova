@@ -3,13 +3,13 @@ package com.template.app
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.collectAsState
@@ -22,6 +22,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import com.template.app.bugreport.CrashAutoReporter
 import com.template.app.ui.navigation.AppNavHost
+import com.template.app.ui.theme.AnovaTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -64,8 +65,14 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme {
-                val mainViewModel: MainViewModel = hiltViewModel()
+            val mainViewModel: MainViewModel = hiltViewModel()
+            val appTheme by mainViewModel.appTheme.collectAsState()
+            val darkTheme = when (appTheme) {
+                "LIGHT"  -> false
+                "DARK"   -> true
+                else     -> isSystemInDarkTheme()
+            }
+            AnovaTheme(darkTheme = darkTheme) {
                 val updatePrompt by mainViewModel.updatePrompt.collectAsState()
 
                 AppNavHost()

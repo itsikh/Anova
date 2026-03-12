@@ -2,7 +2,9 @@ package com.template.app.anova
 
 data class AnovaDeviceState(
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
+    val cookerId: String? = null,
     val currentTemp: Float? = null,
+    val targetTemp: Float? = null,
     val unit: TempUnit = TempUnit.CELSIUS,
     val timerMinutes: Int? = null,
     val status: AnovaStatus = AnovaStatus.UNKNOWN,
@@ -17,7 +19,6 @@ enum class ConnectionState {
 
 enum class TempUnit {
     CELSIUS, FAHRENHEIT;
-
     val symbol: String get() = if (this == CELSIUS) "°C" else "°F"
 }
 
