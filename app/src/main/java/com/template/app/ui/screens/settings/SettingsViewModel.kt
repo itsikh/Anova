@@ -21,6 +21,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -62,6 +63,7 @@ class SettingsViewModel @Inject constructor(
     private val updateManager: AppUpdateManager,
     private val backupManager: AnovaBackupManager,
     private val anovaSettings: AnovaSettings,
+    private val alertManager: com.template.app.notifications.AnovaAlertManager,
     private val firebaseAuth: AnovaFirebaseAuth,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -312,6 +314,26 @@ class SettingsViewModel @Inject constructor(
     fun setAlertDeviceOffline(v: Boolean)  = viewModelScope.launch { anovaSettings.setAlertDeviceOffline(v) }
     fun setAlertScheduleFailed(v: Boolean) = viewModelScope.launch { anovaSettings.setAlertScheduleFailed(v) }
     fun setAlertCookStarted(v: Boolean)    = viewModelScope.launch { anovaSettings.setAlertCookStarted(v) }
+
+    // ── Alert sound & vibration ───────────────────────────────────────────────
+
+    val alertSoundUri: StateFlow<String?> = anovaSettings.alertSoundUri
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val alertVibrate: StateFlow<Boolean> = anovaSettings.alertVibrate
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    fun setAlertSoundUri(uri: String?) = viewModelScope.launch {
+        anovaSettings.setAlertSoundUri(uri)
+        val vibrate = anovaSettings.alertVibrate.first()
+        alertManager.recreateAlertChannels(uri, vibrate)
+    }
+
+    fun setAlertVibrate(on: Boolean) = viewModelScope.launch {
+        anovaSettings.setAlertVibrate(on)
+        val uri = anovaSettings.alertSoundUri.first()
+        alertManager.recreateAlertChannels(uri, on)
+    }
 
     companion object {
         private const val TAG = "SettingsViewModel"

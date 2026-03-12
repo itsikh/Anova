@@ -1,5 +1,8 @@
 package com.template.app.ui.screens.settings
 
+import android.app.Activity
+import android.content.Intent
+import android.media.RingtoneManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +47,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -255,6 +261,13 @@ fun SettingsScreen(
                         AlertToggleRow("Cook started remotely",   alertCookStarted,    { viewModel.setAlertCookStarted(it) })
                     }
                 }
+
+                Spacer(Modifier.height(16.dp))
+
+                // ── Alert Sound & Vibration ───────────────────────────────────
+                SectionHeader("Alert Sound & Vibration")
+                Spacer(Modifier.height(8.dp))
+                AlertSoundCard(viewModel = viewModel)
 
                 Spacer(Modifier.height(16.dp))
 
@@ -664,6 +677,94 @@ fun SettingsScreen(
                 TextButton(onClick = { showClearLogsDialog = false }) { Text("Cancel") }
             }
         )
+    }
+}
+
+@Composable
+private fun AlertSoundCard(viewModel: SettingsViewModel) {
+    val context     = LocalContext.current
+    val soundUri    by viewModel.alertSoundUri.collectAsState()
+    val vibrate     by viewModel.alertVibrate.collectAsState()
+
+    // Resolve a human-readable name for the currently saved URI
+    val soundName = remember(soundUri) {
+        when {
+            soundUri == null -> "Default alarm"
+            else -> runCatching {
+                RingtoneManager.getRingtone(context, Uri.parse(soundUri)).getTitle(context)
+            }.getOrDefault("Custom sound")
+        }
+    }
+
+    // Ringtone picker
+    val ringtoneLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            @Suppress("DEPRECATION")
+            val picked = result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            viewModel.setAlertSoundUri(picked?.toString())
+        }
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+
+            // Sound picker row
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.MusicNote, null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Alert Sound", style = MaterialTheme.typography.bodyLarge)
+                    Text(soundName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                OutlinedButton(
+                    onClick = {
+                        ringtoneLauncher.launch(
+                            Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
+                                putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                                putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                                putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Alert Sound")
+                                soundUri?.let {
+                                    putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, Uri.parse(it))
+                                }
+                            }
+                        )
+                    }
+                ) { Text("Pick") }
+            }
+
+            HorizontalDivider()
+
+            // Vibration toggle
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Vibration, null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Vibration", style = MaterialTheme.typography.bodyLarge)
+                    Text("Vibrate on all alert notifications",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = vibrate, onCheckedChange = { viewModel.setAlertVibrate(it) })
+            }
+
+            HorizontalDivider()
+
+            // DND bypass note
+            Text(
+                "⚠ Alerts use alarm priority — they will sound even when your phone is on Silent, Do Not Disturb, or Mute.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

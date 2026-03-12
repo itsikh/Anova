@@ -50,6 +50,10 @@ class AnovaSettings @Inject constructor(
         val KEY_SCHEDULER_RETRY_MS      = longPreferencesKey("scheduler_retry_ms")
         val KEY_SCHEDULER_MAX_RETRIES   = intPreferencesKey("scheduler_max_retries")
 
+        // Alert sound & vibration
+        val KEY_ALERT_SOUND_URI = stringPreferencesKey("alert_sound_uri")
+        val KEY_ALERT_VIBRATE   = booleanPreferencesKey("alert_vibrate")
+
         // Defaults
         const val DEFAULT_LOCAL_POLL_MS   = 2_000L
         const val DEFAULT_REMOTE_POLL_MS  = 30_000L
@@ -86,6 +90,10 @@ class AnovaSettings @Inject constructor(
     val schedulerRetryMs:    Flow<Long>  = store.data.map { it[KEY_SCHEDULER_RETRY_MS]    ?: DEFAULT_SCHEDULER_RETRY_MS }
     val schedulerMaxRetries: Flow<Int>   = store.data.map { it[KEY_SCHEDULER_MAX_RETRIES] ?: DEFAULT_SCHEDULER_MAX_RETRIES }
 
+    /** `null` = use the default alarm sound */
+    val alertSoundUri: Flow<String?> = store.data.map { it[KEY_ALERT_SOUND_URI] }
+    val alertVibrate:  Flow<Boolean> = store.data.map { it[KEY_ALERT_VIBRATE] ?: true }
+
     suspend fun setConnectionMode(mode: ConnectionMode)    = store.edit { it[KEY_CONNECTION_MODE] = mode.name }
     suspend fun setLocalWifiIp(ip: String)                 = store.edit { it[KEY_LOCAL_WIFI_IP]   = ip }
     suspend fun setCloudEmail(email: String)               = store.edit { it[KEY_CLOUD_EMAIL]     = email }
@@ -108,4 +116,9 @@ class AnovaSettings @Inject constructor(
 
     suspend fun setSchedulerRetryMs(ms: Long)              = store.edit { it[KEY_SCHEDULER_RETRY_MS]    = ms }
     suspend fun setSchedulerMaxRetries(n: Int)             = store.edit { it[KEY_SCHEDULER_MAX_RETRIES] = n }
+
+    suspend fun setAlertSoundUri(uri: String?) = store.edit {
+        if (uri == null) it.remove(KEY_ALERT_SOUND_URI) else it[KEY_ALERT_SOUND_URI] = uri
+    }
+    suspend fun setAlertVibrate(on: Boolean) = store.edit { it[KEY_ALERT_VIBRATE] = on }
 }

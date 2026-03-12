@@ -51,15 +51,15 @@ private val DarkScheme = darkColorScheme(
     onSecondaryContainer  = Color(0xFFD1E4FF),
     tertiary              = Color(0xFF66BB6A),
     tertiaryContainer     = Color(0xFF1B3D1C),
-    background            = AnovaNavy,
-    onBackground          = Color(0xFFECEEF0),
-    surface               = AnovaNavySurface,
-    onSurface             = Color(0xFFECEEF0),
-    surfaceVariant        = Color(0xFF15283A),
-    onSurfaceVariant      = Color(0xFFAABAC8),
+    background            = Color(0xFF0F0F0F),   // deep charcoal
+    onBackground          = Color(0xFFEAEAEA),
+    surface               = Color(0xFF191919),   // slightly elevated charcoal
+    onSurface             = Color(0xFFEAEAEA),
+    surfaceVariant        = Color(0xFF222222),
+    onSurfaceVariant      = Color(0xFF909090),
     error                 = Color(0xFFEF5350),
     onError               = Color(0xFF690005),
-    outline               = Color(0xFF2E4055),
+    outline               = Color(0xFF333333),
 )
 
 @Composable

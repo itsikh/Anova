@@ -3,19 +3,22 @@ package com.template.app
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.media.AudioAttributes
-import android.provider.Settings
 import com.template.app.logging.GlobalExceptionHandler
 import dagger.hilt.android.HiltAndroidApp
+import javax.inject.Inject
 
 @HiltAndroidApp
 class TemplateApplication : Application() {
+
+    // Injected after Hilt initialises; used to recreate channels with user's saved settings on boot.
+    @Inject lateinit var alertManager: com.template.app.notifications.AnovaAlertManager
 
     override fun onCreate() {
         super.onCreate()
         Thread.setDefaultUncaughtExceptionHandler(
             GlobalExceptionHandler(this, Thread.getDefaultUncaughtExceptionHandler())
         )
+        // Create all channels with safe defaults first (Hilt DI runs as part of onCreate injection).
         createNotificationChannels()
     }
 
@@ -28,31 +31,9 @@ class TemplateApplication : Application() {
             }
         )
 
-        // Alarm channel — bypasses DND for critical temperature alerts
-        manager.createNotificationChannel(
-            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALARM, "Temperature Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Critical temperature threshold alerts — sounds even in silent mode"
-                setBypassDnd(true)
-                setSound(
-                    Settings.System.DEFAULT_ALARM_ALERT_URI,
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                enableVibration(true)
-            }
-        )
-
         manager.createNotificationChannel(
             NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_COOK_STATUS, "Cook Status", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Ongoing notification while a cook is active — shows temp, timer, and controls"
-            }
-        )
-
-        manager.createNotificationChannel(
-            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALERTS, "Anova Events", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Cook finished, device offline, and other event notifications"
             }
         )
 
@@ -61,5 +42,11 @@ class TemplateApplication : Application() {
                 description = "Required for background device monitoring"
             }
         )
+
+        // Alert channels — delegated to AnovaAlertManager so it owns the channel spec and can
+        // recreate them later when the user changes alert sound / vibration settings.
+        // Default: alarm sound + vibration enabled, bypasses DND and hardware silent mode.
+        alertManager.createAlarmChannel(soundUri = null, vibrate = true)
+        alertManager.createAlertsChannel(soundUri = null, vibrate = true)
     }
 }

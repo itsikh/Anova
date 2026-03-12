@@ -1,9 +1,13 @@
 package com.template.app.notifications
 
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.net.Uri
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import com.template.app.AppConfig
 import com.template.app.MainActivity
@@ -31,6 +35,12 @@ class AnovaAlertManager @Inject constructor(
 
         const val ACTION_STOP_COOK  = "com.template.app.ACTION_STOP_COOK"
         const val ACTION_ADD_HOUR   = "com.template.app.ACTION_ADD_HOUR"
+
+        /** AudioAttributes used for both alert channels — bypasses DND and hardware silent. */
+        private val ALARM_AUDIO = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
     }
 
     private fun tapIntent(id: Int): PendingIntent = PendingIntent.getActivity(
@@ -72,7 +82,7 @@ class AnovaAlertManager @Inject constructor(
 
     fun cancelCookNotification() = nm.cancel(NOTIFICATION_ID_COOK_STATUS)
 
-    // ── Threshold alerts (alarm channel — bypasses DND) ───────────────────────
+    // ── Threshold alerts (alarm channel — bypasses DND + hardware silent) ──────
 
     fun postTempAlert(message: String, notificationId: Int) {
         val n = NotificationCompat.Builder(context, AppConfig.NOTIFICATION_CHANNEL_ALARM)
@@ -87,18 +97,62 @@ class AnovaAlertManager @Inject constructor(
         nm.notify(notificationId, n)
     }
 
-    // ── Event alerts ──────────────────────────────────────────────────────────
+    // ── Event alerts (cook finished, offline, started — also bypasses DND) ────
 
     fun postEventAlert(title: String, message: String, notificationId: Int) {
         val n = NotificationCompat.Builder(context, AppConfig.NOTIFICATION_CHANNEL_ALERTS)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
             .setContentText(message)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setContentIntent(tapIntent(notificationId))
             .setAutoCancel(true)
             .build()
         nm.notify(notificationId, n)
+    }
+
+    // ── Channel management ────────────────────────────────────────────────────
+
+    /**
+     * Deletes and recreates both alert channels with the given sound URI and vibration setting.
+     * Called when the user changes alert sound or vibration preferences.
+     *
+     * [soundUri] — custom ringtone URI string, or `null` to use the default alarm sound.
+     * [vibrate]  — whether vibration is enabled for alert notifications.
+     *
+     * Note: On Android 8+ notification channels cache their sound. Deleting and recreating
+     * the channel is the only way to programmatically change the sound.
+     */
+    fun recreateAlertChannels(soundUri: String?, vibrate: Boolean) {
+        nm.deleteNotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALARM)
+        nm.deleteNotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALERTS)
+        createAlarmChannel(soundUri, vibrate)
+        createAlertsChannel(soundUri, vibrate)
+    }
+
+    fun createAlarmChannel(soundUri: String?, vibrate: Boolean) {
+        val sound = soundUri?.let { Uri.parse(it) } ?: Settings.System.DEFAULT_ALARM_ALERT_URI
+        nm.createNotificationChannel(
+            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALARM, "Temperature Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Critical temperature threshold alerts — sounds even in Silent, DND, and Mute modes"
+                setBypassDnd(true)
+                setSound(sound, ALARM_AUDIO)
+                enableVibration(vibrate)
+            }
+        )
+    }
+
+    fun createAlertsChannel(soundUri: String?, vibrate: Boolean) {
+        val sound = soundUri?.let { Uri.parse(it) } ?: Settings.System.DEFAULT_ALARM_ALERT_URI
+        nm.createNotificationChannel(
+            NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALERTS, "Anova Events", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Cook finished, device offline, cook started — sounds even in Silent, DND, and Mute modes"
+                setBypassDnd(true)
+                setSound(sound, ALARM_AUDIO)
+                enableVibration(vibrate)
+            }
+        )
     }
 
     // ── Foreground service notification ───────────────────────────────────────

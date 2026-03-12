@@ -76,6 +76,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.ui.unit.Dp
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.template.app.anova.ActiveTransport
@@ -103,13 +106,13 @@ private val DC_ArcAmber    = Color(0xFFFF9500)
 private val DC_ArcRed      = Color(0xFFFF3300)
 private val DC_TipDot      = Color(0xFFFF5000)
 private val DC_TextPrimary = Color(0xFFEAEAEA)
-private val DC_TextDim     = Color(0xFF4A4A4A)
-private val DC_TextMuted   = Color(0xFF2A2A2A)
+private val DC_TextDim     = Color(0xFF909090)
+private val DC_TextMuted   = Color(0xFF606060)
 private val DC_Orange      = Color(0xFFFF6600)
-private val DC_AlertBg     = Color(0x14FF6600)
-private val DC_AlertBorder = Color(0x33FF6600)
-private val DC_IconBg      = Color(0x0AFFFFFF)
-private val DC_IconBorder  = Color(0x0FFFFFFF)
+private val DC_AlertBg     = Color(0x1AFF6600)
+private val DC_AlertBorder = Color(0x44FF6600)
+private val DC_IconBg      = Color(0x12FFFFFF)
+private val DC_IconBorder  = Color(0x18FFFFFF)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -239,26 +242,35 @@ fun MonitorScreen(
         },
         containerColor = DC_Bg
     ) { innerPadding ->
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val ringSize = (maxHeight * 0.33f).coerceIn(160.dp, 220.dp)
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
             // Status + device name
             DarkStatusRow(state.connectionState, state.status, active, state.deviceName)
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
 
-            // Thermostat ring
-            ThermostatRing(
-                currentTemp = state.currentTemp,
-                targetTemp = state.targetTemp,
-                unit = state.unit.symbol
-            )
+            // Thermostat ring — sized to fit available screen height
+            Box(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                ThermostatRing(
+                    currentTemp = state.currentTemp,
+                    targetTemp = state.targetTemp,
+                    unit = state.unit.symbol,
+                    ringDp = ringSize
+                )
+            }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
 
             // Info row: Target | Remaining | Finishes at
             InfoRow(
@@ -276,7 +288,7 @@ fun MonitorScreen(
             // Times row: finish date · updated time
             TimesRow(finishEpoch = timerFinishEpochMs, lastUpdated = state.lastUpdated)
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
 
             // Alert strip
             if (thresholds.minTempEnabled && thresholds.minTemp > 0f) {
@@ -367,8 +379,9 @@ fun MonitorScreen(
                 )
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(8.dp))
         }
+        } // BoxWithConstraints
     }
 
     // ── Dialogs ───────────────────────────────────────────────────────────────
@@ -476,7 +489,7 @@ fun MonitorScreen(
 // ── Thermostat ring ───────────────────────────────────────────────────────────
 
 @Composable
-private fun ThermostatRing(currentTemp: Float?, targetTemp: Float?, unit: String) {
+private fun ThermostatRing(currentTemp: Float?, targetTemp: Float?, unit: String, ringDp: Dp = 220.dp) {
     val fillFraction = remember(currentTemp, targetTemp) {
         if (currentTemp != null && targetTemp != null && targetTemp > 0f)
             (currentTemp / targetTemp).coerceIn(0f, 1f)
@@ -490,7 +503,7 @@ private fun ThermostatRing(currentTemp: Float?, targetTemp: Float?, unit: String
     val arcColor = lerp(DC_ArcAmber, DC_ArcRed, animatedFill)
 
     Box(
-        modifier = Modifier.size(252.dp),
+        modifier = Modifier.size(ringDp),
         contentAlignment = Alignment.Center
     ) {
         val strokeDp = 14.dp
@@ -647,7 +660,7 @@ private fun InfoRow(
             onClick  = if (isConnected && targetTemp != null) onTempClick else null
         )
 
-        Box(Modifier.width(1.dp).height(30.dp).background(DC_Track))
+        Box(Modifier.width(1.dp).height(30.dp).background(Color(0xFF2A2A2A)))
 
         // Remaining
         InfoCell(
@@ -657,7 +670,7 @@ private fun InfoRow(
             onClick  = if (isConnected) onTimerClick else null
         )
 
-        Box(Modifier.width(1.dp).height(30.dp).background(DC_Track))
+        Box(Modifier.width(1.dp).height(30.dp).background(Color(0xFF2A2A2A)))
 
         // Finishes at
         InfoCell(
