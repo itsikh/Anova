@@ -7,6 +7,7 @@ import com.template.app.anova.AnovaTransport
 import com.template.app.anova.ConnectionState
 import com.template.app.anova.TempUnit
 import com.template.app.logging.AppLogger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -19,6 +20,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -55,6 +58,9 @@ class AnovaCloudTransport @Inject constructor(
 
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
+    /** Pending RESPONSE waiters keyed by requestId. */
+    private val pendingCommands = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
     private var webSocket: WebSocket? = null
     private var cookerId: String? = null
@@ -263,6 +269,7 @@ class AnovaCloudTransport @Inject constructor(
             when (cmdOnly.command) {
                 "EVENT_APC_WIFI_LIST"  -> handleWifiList(text)
                 "EVENT_APC_STATE"      -> handleState(text)
+                "RESPONSE"             -> handleResponse(text)
                 else -> AppLogger.i(TAG, "Unhandled WS command: ${cmdOnly.command} — ${text.take(120)}")
             }
         } catch (e: Exception) {
@@ -343,11 +350,34 @@ class AnovaCloudTransport @Inject constructor(
         AppLogger.d(TAG, "State: ${currentTemp}° → ${targetTemp}° status=${modeState?.mode} timer=${timerRemainingMin}m")
     }
 
-    private fun sendCommand(command: String, payload: Map<String, Any?>): Boolean {
+    private suspend fun sendCommand(command: String, payload: Map<String, Any?>): Boolean {
         val ws = webSocket ?: return false
-        val cmd = WsCommand(command = command, requestId = UUID.randomUUID().toString(), payload = payload)
+        val requestId = UUID.randomUUID().toString()
+        val cmd = WsCommand(command = command, requestId = requestId, payload = payload)
         val json = gson.toJson(cmd)
         AppLogger.d(TAG, "Sending: ${json.take(120)}")
-        return ws.send(json)
+
+        val deferred = CompletableDeferred<Boolean>()
+        pendingCommands[requestId] = deferred
+
+        if (!ws.send(json)) {
+            pendingCommands.remove(requestId)
+            AppLogger.w(TAG, "ws.send() failed (WebSocket buffer full or closed)")
+            return false
+        }
+
+        // Wait up to 5 s for the server to acknowledge with a RESPONSE message.
+        val ok = withTimeoutOrNull(5_000) { deferred.await() }
+        pendingCommands.remove(requestId)
+        if (ok == null) AppLogger.w(TAG, "Timeout waiting for RESPONSE to $command ($requestId)")
+        return ok == true
+    }
+
+    private fun handleResponse(text: String) {
+        val response = gson.fromJson(text, WsResponse::class.java)
+        val requestId = response.requestId ?: return
+        val ok = response.payload?.status?.equals("ok", ignoreCase = true) == true
+        AppLogger.d(TAG, "RESPONSE [$requestId] status=${response.payload?.status}")
+        pendingCommands[requestId]?.complete(ok)
     }
 }

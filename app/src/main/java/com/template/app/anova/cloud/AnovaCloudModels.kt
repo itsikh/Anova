@@ -46,6 +46,14 @@ data class WsCommand(
     @SerializedName("payload")   val payload: Map<String, Any?>
 )
 
+/** Inbound RESPONSE envelope — server acknowledges each command by requestId. */
+data class WsResponse(
+    @SerializedName("command")   val command: String?,
+    @SerializedName("requestId") val requestId: String?,
+    @SerializedName("payload")   val payload: WsResponsePayload?
+)
+data class WsResponsePayload(@SerializedName("status") val status: String?)
+
 // EVENT_APC_WIFI_LIST
 // payload is a list of connected devices
 data class WsApcWifiListEvent(
