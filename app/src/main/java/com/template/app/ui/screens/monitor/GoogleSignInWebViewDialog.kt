@@ -48,6 +48,7 @@ fun GoogleSignInWebViewDialog(
     onDismiss: () -> Unit
 ) {
     var isLoading by remember { mutableStateOf(true) }
+    var intercepted by remember { mutableStateOf(false) }
 
     AppLogger.i(TAG, "Dialog composed — loading authUri: ${authUri.take(80)}…")
 
@@ -103,6 +104,23 @@ fun GoogleSignInWebViewDialog(
                                     override fun onPageFinished(view: WebView?, url: String?) {
                                         AppLogger.d(TAG, "onPageFinished: ${url?.take(120)}")
                                         isLoading = false
+                                        // Fallback: shouldOverrideUrlLoading may not fire when
+                                        // the fragment (#id_token=...) is stripped from the Uri.
+                                        // If we land on the Firebase auth handler page, pull the
+                                        // full href (including fragment) via JS before the page's
+                                        // own Firebase SDK consumes it.
+                                        val host = url?.let { android.net.Uri.parse(it).host } ?: ""
+                                        if (host == AnovaCloudConfig.FIREBASE_AUTH_HANDLER_HOST && !intercepted) {
+                                            view?.evaluateJavascript("window.location.href") { href ->
+                                                val cleaned = href?.trim('"') ?: ""
+                                                AppLogger.d(TAG, "onPageFinished JS href: ${cleaned.take(120)}")
+                                                if (cleaned.contains("id_token=") && !intercepted) {
+                                                    intercepted = true
+                                                    AppLogger.i(TAG, "✅ onPageFinished fallback — intercepting Firebase handler")
+                                                    onAuthRedirectIntercepted(cleaned, sessionId)
+                                                }
+                                            }
+                                        }
                                     }
 
                                     override fun onReceivedError(
@@ -133,7 +151,8 @@ fun GoogleSignInWebViewDialog(
                                         val host = request.url?.host ?: ""
                                         AppLogger.d(TAG, "shouldOverrideUrlLoading host=$host url=${url.take(120)}")
 
-                                        if (host == AnovaCloudConfig.FIREBASE_AUTH_HANDLER_HOST) {
+                                        if (host == AnovaCloudConfig.FIREBASE_AUTH_HANDLER_HOST && !intercepted) {
+                                            intercepted = true
                                             AppLogger.i(TAG, "✅ Intercepted Firebase auth handler redirect — exchanging for token")
                                             onAuthRedirectIntercepted(url, sessionId)
                                             return true
