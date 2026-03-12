@@ -117,12 +117,10 @@ class AnovaRepository @Inject constructor(
     suspend fun startCook(): Boolean = cloudTransport.startCook()
 
     suspend fun stopCook(): Boolean {
-        val ok = cloudTransport.stopCook()
-        if (ok) {
-            _deviceState.update { it.copy(status = AnovaStatus.STOPPED) }
-            alertManager.cancelCookNotification()
-        }
-        return ok
+        // Do NOT optimistically update status here — ws.send() only confirms the message
+        // was enqueued in OkHttp's buffer, not that the device received or acted on it.
+        // The real status change arrives via EVENT_APC_STATE push from the cloud.
+        return cloudTransport.stopCook()
     }
 
     suspend fun updateCook(targetTemp: Float? = null, timerSeconds: Int? = null): Boolean =

@@ -77,6 +77,10 @@ class AnovaViewModel @Inject constructor(
     private val _controlError = MutableStateFlow<String?>(null)
     val controlError: StateFlow<String?> = _controlError.asStateFlow()
 
+    /** True while a start/stop command has been sent but device hasn't confirmed it yet. */
+    private val _cookCommandPending = MutableStateFlow(false)
+    val cookCommandPending: StateFlow<Boolean> = _cookCommandPending.asStateFlow()
+
     /** Expiry of the stored Anova JWT, or 0 if none. */
     val anovaJwtExpiryMs: Long get() = firebaseAuth.anovaJwtExpiryMs
     val storedEmail: String?   get() = firebaseAuth.storedEmail
@@ -90,7 +94,14 @@ class AnovaViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             var lastTarget: Float? = null
+            var lastStatus: AnovaStatus? = null
             displayDeviceState.collect { state ->
+                // Device confirmed a status change → command was delivered, clear pending flag
+                if (state.status != lastStatus && lastStatus != null) {
+                    _cookCommandPending.value = false
+                }
+                lastStatus = state.status
+
                 val target = state.targetTemp
                 // When target temp changes, recalculate auto min (and reset reached flag)
                 if (target != null && target != lastTarget) {
@@ -139,15 +150,17 @@ class AnovaViewModel @Inject constructor(
 
     fun startCook() {
         viewModelScope.launch {
+            _cookCommandPending.value = true
             val ok = repository.startCook()
-            if (!ok) _controlError.value = "Failed to start cook — check connection."
+            if (!ok) { _cookCommandPending.value = false; _controlError.value = "Failed to start cook — check connection." }
         }
     }
 
     fun stopCook() {
         viewModelScope.launch {
+            _cookCommandPending.value = true
             val ok = repository.stopCook()
-            if (!ok) _controlError.value = "Failed to stop cook — check connection."
+            if (!ok) { _cookCommandPending.value = false; _controlError.value = "Failed to stop cook — check connection." }
         }
     }
 

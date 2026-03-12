@@ -33,7 +33,7 @@ fun ThresholdDialog(
 ) {
     var minEnabled by remember { mutableStateOf(current.minTempEnabled) }
     var minTemp    by remember { mutableStateOf("%.1f".format(current.minTemp)) }
-    var minManuallyEdited by remember { mutableStateOf(false) }
+    var isAuto     by remember { mutableStateOf(current.isAutoMin) }
     var maxEnabled by remember { mutableStateOf(current.maxTempEnabled) }
     var maxTemp    by remember { mutableStateOf(current.maxTemp.toString()) }
 
@@ -58,16 +58,23 @@ fun ThresholdDialog(
                 if (minEnabled) {
                     OutlinedTextField(
                         value = minTemp,
-                        onValueChange = { minTemp = it; minManuallyEdited = true },
+                        onValueChange = { minTemp = it; isAuto = false },
                         label = {
-                            Text(if (current.isAutoMin && !minManuallyEdited)
-                                "Min temp ($unitSymbol) — auto (10% below target)"
-                            else "Min temp ($unitSymbol)")
+                            Text(if (isAuto) "Min temp ($unitSymbol) — auto (10% below target)"
+                                 else "Min temp ($unitSymbol)")
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (!isAuto) {
+                        TextButton(
+                            onClick = { isAuto = true },
+                            modifier = Modifier.padding(top = 0.dp)
+                        ) {
+                            Text("↩ Reset to Auto (10% below target)")
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(4.dp))
@@ -99,7 +106,7 @@ fun ThresholdDialog(
                     ThresholdSettings(
                         minTempEnabled = minEnabled,
                         minTemp = minTemp.toFloatOrNull() ?: current.minTemp,
-                        isAutoMin = current.isAutoMin && !minManuallyEdited,
+                        isAutoMin = isAuto,
                         maxTempEnabled = maxEnabled,
                         maxTemp = maxTemp.toFloatOrNull() ?: current.maxTemp
                     )
