@@ -726,7 +726,7 @@ private fun AlertSoundCard(viewModel: SettingsViewModel) {
                     onClick = {
                         ringtoneLauncher.launch(
                             Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
+                                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE)
                                 putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
                                 putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
                                 putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Alert Sound")

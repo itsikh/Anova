@@ -324,6 +324,15 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     fun setAlertSoundUri(uri: String?) = viewModelScope.launch {
+        if (uri != null) {
+            // Take a persistable read permission so the URI stays accessible across restarts.
+            // Without this, content:// URIs from the picker become invalid after the app restarts.
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+        }
         anovaSettings.setAlertSoundUri(uri)
         val vibrate = anovaSettings.alertVibrate.first()
         alertManager.recreateAlertChannels(uri, vibrate)

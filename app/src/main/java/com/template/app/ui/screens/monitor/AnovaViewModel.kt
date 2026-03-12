@@ -92,6 +92,9 @@ class AnovaViewModel @Inject constructor(
     // 0 = alert not active. >0 = System.currentTimeMillis() of last notification fire.
     private var lastMinAlertMs = 0L
     private var lastMaxAlertMs = 0L
+    // 0 = not snoozed. >0 = System.currentTimeMillis() at which snooze expires.
+    private var snoozeMinUntilMs = 0L
+    private var snoozeMaxUntilMs = 0L
     // True once the device has reached its target temp during the current cook.
     // Min alert only fires after this point — prevents false alerts while heating up.
     private var hasReachedTarget = false
@@ -245,6 +248,18 @@ class AnovaViewModel @Inject constructor(
         _activeAlerts.value = emptyList()
         lastMinAlertMs = 0L
         lastMaxAlertMs = 0L
+        snoozeMinUntilMs = 0L
+        snoozeMaxUntilMs = 0L
+        alertManager.cancelTempAlerts()
+    }
+
+    fun snoozeAlerts() {
+        val until = System.currentTimeMillis() + SNOOZE_MS
+        if (_activeAlerts.value.any { it.type == AlertType.MIN }) snoozeMinUntilMs = until
+        if (_activeAlerts.value.any { it.type == AlertType.MAX }) snoozeMaxUntilMs = until
+        _activeAlerts.value = emptyList()
+        lastMinAlertMs = 0L
+        lastMaxAlertMs = 0L
         alertManager.cancelTempAlerts()
     }
 
@@ -278,10 +293,11 @@ class AnovaViewModel @Inject constructor(
         }
 
         // Min alert: only fires after device has reached target temp (not during heat-up).
-        // Re-fires every ALERT_REPEAT_MS while condition remains active.
+        // Re-fires every ALERT_REPEAT_MS while condition remains active (unless snoozed).
         val minActive = t.minTempEnabled && hasReachedTarget && temp <= t.minTemp
         if (minActive) {
-            if (lastMinAlertMs == 0L || (now - lastMinAlertMs) >= ALERT_REPEAT_MS) {
+            val snoozed = now < snoozeMinUntilMs
+            if (!snoozed && (lastMinAlertMs == 0L || (now - lastMinAlertMs) >= ALERT_REPEAT_MS)) {
                 lastMinAlertMs = now
                 val msg = "Temp ${fmt(temp)}${state.unit.symbol} — below min ${fmt(t.minTemp)}${state.unit.symbol}"
                 alertManager.postTempAlert(msg, AnovaAlertManager.NOTIFICATION_ID_TEMP_MIN)
@@ -289,6 +305,7 @@ class AnovaViewModel @Inject constructor(
                 _activeAlerts.value = others + ActiveAlert(msg, AlertType.MIN)
             }
         } else {
+            snoozeMinUntilMs = 0L
             lastMinAlertMs = 0L
             if (_activeAlerts.value.any { it.type == AlertType.MIN }) {
                 _activeAlerts.value = _activeAlerts.value.filter { it.type != AlertType.MIN }
@@ -297,7 +314,8 @@ class AnovaViewModel @Inject constructor(
 
         val maxActive = t.maxTempEnabled && temp >= t.maxTemp
         if (maxActive) {
-            if (lastMaxAlertMs == 0L || (now - lastMaxAlertMs) >= ALERT_REPEAT_MS) {
+            val snoozed = now < snoozeMaxUntilMs
+            if (!snoozed && (lastMaxAlertMs == 0L || (now - lastMaxAlertMs) >= ALERT_REPEAT_MS)) {
                 lastMaxAlertMs = now
                 val msg = "Temp ${fmt(temp)}${state.unit.symbol} — above max ${fmt(t.maxTemp)}${state.unit.symbol}"
                 alertManager.postTempAlert(msg, AnovaAlertManager.NOTIFICATION_ID_TEMP_MAX)
@@ -305,6 +323,7 @@ class AnovaViewModel @Inject constructor(
                 _activeAlerts.value = others + ActiveAlert(msg, AlertType.MAX)
             }
         } else {
+            snoozeMaxUntilMs = 0L
             lastMaxAlertMs = 0L
             if (_activeAlerts.value.any { it.type == AlertType.MAX }) {
                 _activeAlerts.value = _activeAlerts.value.filter { it.type != AlertType.MAX }
@@ -314,6 +333,7 @@ class AnovaViewModel @Inject constructor(
 
     companion object {
         private const val ALERT_REPEAT_MS = 2 * 60 * 1_000L
+        private const val SNOOZE_MS       = 5 * 60 * 1_000L
     }
 
     private fun fmt(t: Float) = "%.1f".format(t)

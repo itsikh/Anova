@@ -28,6 +28,7 @@ import com.template.app.anova.ThresholdSettings
 fun ThresholdDialog(
     current: ThresholdSettings,
     unitSymbol: String,
+    currentTargetTemp: Float?,
     onConfirm: (ThresholdSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -69,7 +70,12 @@ fun ThresholdDialog(
                     )
                     if (!isAuto) {
                         TextButton(
-                            onClick = { isAuto = true },
+                            onClick = {
+                                isAuto = true
+                                if (currentTargetTemp != null) {
+                                    minTemp = "%.1f".format(currentTargetTemp * 0.9f)
+                                }
+                            },
                             modifier = Modifier.padding(top = 0.dp)
                         ) {
                             Text("↩ Reset to Auto (10% below target)")
