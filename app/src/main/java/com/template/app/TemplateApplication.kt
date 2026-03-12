@@ -3,22 +3,24 @@ package com.template.app
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import com.template.app.anova.AnovaSettings
 import com.template.app.logging.GlobalExceptionHandler
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 @HiltAndroidApp
 class TemplateApplication : Application() {
 
-    // Injected after Hilt initialises; used to recreate channels with user's saved settings on boot.
     @Inject lateinit var alertManager: com.template.app.notifications.AnovaAlertManager
+    @Inject lateinit var anovaSettings: AnovaSettings
 
     override fun onCreate() {
         super.onCreate()
         Thread.setDefaultUncaughtExceptionHandler(
             GlobalExceptionHandler(this, Thread.getDefaultUncaughtExceptionHandler())
         )
-        // Create all channels with safe defaults first (Hilt DI runs as part of onCreate injection).
         createNotificationChannels()
     }
 
@@ -43,10 +45,13 @@ class TemplateApplication : Application() {
             }
         )
 
-        // Alert channels — delegated to AnovaAlertManager so it owns the channel spec and can
-        // recreate them later when the user changes alert sound / vibration settings.
-        // Default: alarm sound + vibration enabled, bypasses DND and hardware silent mode.
-        alertManager.createAlarmChannel(soundUri = null, vibrate = true)
-        alertManager.createAlertsChannel(soundUri = null, vibrate = true)
+        // Read saved alert sound + vibration so channels are always created with the user's
+        // preferences — not the default. This matters on restarts after recreateAlertChannels()
+        // deleted the old channels (deleted channels lose their sound settings system-side).
+        val (savedSound, savedVibrate) = runBlocking {
+            anovaSettings.alertSoundUri.first() to anovaSettings.alertVibrate.first()
+        }
+        alertManager.createAlarmChannel(soundUri = savedSound, vibrate = savedVibrate)
+        alertManager.createAlertsChannel(soundUri = savedSound, vibrate = savedVibrate)
     }
 }

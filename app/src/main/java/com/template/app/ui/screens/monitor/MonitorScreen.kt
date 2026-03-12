@@ -14,6 +14,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -129,7 +130,8 @@ fun MonitorScreen(
     val remotePollMs   by vm.remotePollMs.collectAsState()
     val isScanning     by vm.isScanning.collectAsState()
     val scannedIp      by vm.scannedIp.collectAsState()
-    val controlError   by vm.controlError.collectAsState()
+    val controlError         by vm.controlError.collectAsState()
+    val cookCommandPending   by vm.cookCommandPending.collectAsState()
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -300,7 +302,8 @@ fun MonitorScreen(
                 AlertStrip(
                     minTemp = thresholds.minTemp,
                     unit = state.unit.symbol,
-                    isAuto = thresholds.isAutoMin
+                    isAuto = thresholds.isAutoMin,
+                    onClick = { showThresholdDialog = true }
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -340,6 +343,7 @@ fun MonitorScreen(
                 ) {
                     CookControls(
                         status = state.status,
+                        pending = cookCommandPending,
                         onStart = { vm.startCook() },
                         onStop = { vm.stopCook() },
                         onUpdate = { showSetDialog = true }
@@ -749,13 +753,14 @@ private fun InfoCell(label: String, value: String, isAccent: Boolean, onClick: (
 // ── Alert strip ───────────────────────────────────────────────────────────────
 
 @Composable
-private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean) {
+private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .background(DC_AlertBg, RoundedCornerShape(14.dp))
             .border(1.dp, DC_AlertBorder, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -765,8 +770,10 @@ private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean) {
             "Alert below %.1f%s%s".format(minTemp, unit, if (isAuto) " (auto)" else ""),
             style      = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
-            color      = DC_Orange
+            color      = DC_Orange,
+            modifier   = Modifier.weight(1f)
         )
+        Icon(Icons.Default.Settings, null, tint = DC_Orange.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
     }
 }
 
@@ -775,6 +782,7 @@ private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean) {
 @Composable
 private fun CookControls(
     status: AnovaStatus,
+    pending: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onUpdate: () -> Unit
@@ -795,9 +803,13 @@ private fun CookControls(
                 disabledContainerColor = Color(0xFF1A3D1A),
                 disabledContentColor   = Color(0xFF4A7A4A)
             ),
-            enabled = !isRunning
+            enabled = !isRunning && !pending
         ) {
-            Text("Start", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            if (pending && !isRunning) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF4A7A4A))
+            } else {
+                Text("Start", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
         }
 
         // Stop
@@ -811,12 +823,16 @@ private fun CookControls(
                 disabledContainerColor = Color(0xFF3D1A1A),
                 disabledContentColor   = Color(0xFF7A4A4A)
             ),
-            enabled = isRunning
+            enabled = isRunning && !pending
         ) {
-            Text("Stop", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            if (pending && isRunning) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF7A4A4A))
+            } else {
+                Text("Stop", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
         }
 
-        // Update (set target temp + timer)
+        // Set target temp + timer
         OutlinedButton(
             onClick = onUpdate,
             modifier = Modifier.weight(1f).height(52.dp),
