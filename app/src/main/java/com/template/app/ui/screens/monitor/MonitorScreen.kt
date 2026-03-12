@@ -52,6 +52,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -139,9 +140,12 @@ fun MonitorScreen(
     val notifPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        // Seed auth status from persisted session on first composition
+        val stored = vm.storedEmail
+        if (stored != null && googleSignedInAs == null) googleSignedInAs = stored
     }
 
     fun onConnectClicked() {
@@ -220,7 +224,19 @@ fun MonitorScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            if (state.connectionState == ConnectionState.DISCONNECTED && state.connectionError != null) {
+            // Auth status — show signed-in email or "Not signed in"
+            Text(
+                if (googleSignedInAs != null) "Signed in as: $googleSignedInAs"
+                else "Not signed in",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (googleSignedInAs != null)
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                else
+                    MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center
+            )
+
+            if (state.connectionError != null) {
                 Text(state.connectionError!!, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth())
