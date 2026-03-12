@@ -54,6 +54,13 @@ class AnovaSettings @Inject constructor(
         val KEY_ALERT_SOUND_URI = stringPreferencesKey("alert_sound_uri")
         val KEY_ALERT_VIBRATE   = booleanPreferencesKey("alert_vibrate")
 
+        // Temp threshold settings
+        val KEY_THRESHOLD_MIN_ENABLED = booleanPreferencesKey("threshold_min_enabled")
+        val KEY_THRESHOLD_MIN_TEMP    = stringPreferencesKey("threshold_min_temp")
+        val KEY_THRESHOLD_MIN_AUTO    = booleanPreferencesKey("threshold_min_auto")
+        val KEY_THRESHOLD_MAX_ENABLED = booleanPreferencesKey("threshold_max_enabled")
+        val KEY_THRESHOLD_MAX_TEMP    = stringPreferencesKey("threshold_max_temp")
+
         // Defaults
         const val DEFAULT_LOCAL_POLL_MS   = 2_000L
         const val DEFAULT_REMOTE_POLL_MS  = 30_000L
@@ -121,4 +128,21 @@ class AnovaSettings @Inject constructor(
         if (uri == null) it.remove(KEY_ALERT_SOUND_URI) else it[KEY_ALERT_SOUND_URI] = uri
     }
     suspend fun setAlertVibrate(on: Boolean) = store.edit { it[KEY_ALERT_VIBRATE] = on }
+
+    val thresholdMinEnabled: Flow<Boolean> = store.data.map { it[KEY_THRESHOLD_MIN_ENABLED] ?: false }
+    val thresholdMinTemp:    Flow<Float>   = store.data.map { it[KEY_THRESHOLD_MIN_TEMP]?.toFloatOrNull() ?: 0f }
+    val thresholdMinAuto:    Flow<Boolean> = store.data.map { it[KEY_THRESHOLD_MIN_AUTO]   ?: true }
+    val thresholdMaxEnabled: Flow<Boolean> = store.data.map { it[KEY_THRESHOLD_MAX_ENABLED] ?: false }
+    val thresholdMaxTemp:    Flow<Float>   = store.data.map { it[KEY_THRESHOLD_MAX_TEMP]?.toFloatOrNull() ?: 100f }
+
+    suspend fun saveThresholds(
+        minEnabled: Boolean, minTemp: Float, isAutoMin: Boolean,
+        maxEnabled: Boolean, maxTemp: Float
+    ) = store.edit {
+        it[KEY_THRESHOLD_MIN_ENABLED] = minEnabled
+        it[KEY_THRESHOLD_MIN_TEMP]    = minTemp.toString()
+        it[KEY_THRESHOLD_MIN_AUTO]    = isAutoMin
+        it[KEY_THRESHOLD_MAX_ENABLED] = maxEnabled
+        it[KEY_THRESHOLD_MAX_TEMP]    = maxTemp.toString()
+    }
 }
