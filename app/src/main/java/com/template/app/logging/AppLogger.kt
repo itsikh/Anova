@@ -46,11 +46,13 @@ object AppLogger {
 
     /**
      * Active log level. Entries below this level are discarded.
-     * Defaults to [LogLevel.DEBUG] in debug builds and [LogLevel.WARN] in release builds.
+     * Defaults to [LogLevel.DEBUG] in debug builds and [LogLevel.INFO] in release builds.
+     * INFO is used in release (not WARN) so that connection and auth events are captured
+     * in bug reports — they are logged at INFO level throughout the app.
      * Updated at startup from persisted [DebugSettings.logLevel] and live when the user
      * changes the level in the settings screen.
      */
-    var currentLevel: LogLevel = if (BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.WARN
+    var currentLevel: LogLevel = if (BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.INFO
 
     /**
      * A single captured log entry stored in the in-memory buffer.

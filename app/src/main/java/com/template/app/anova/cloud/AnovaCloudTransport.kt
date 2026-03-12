@@ -165,11 +165,23 @@ class AnovaCloudTransport @Inject constructor(
         val request = Request.Builder().url(url).build()
         AppLogger.i(TAG, "Opening WebSocket…")
         webSocket = client.newWebSocket(request, listener)
+        // If EVENT_APC_WIFI_LIST never arrives, stop waiting after 30s so the
+        // UI can show an error instead of being permanently stuck at CONNECTING.
+        scope.launch {
+            delay(30_000)
+            if (_connectionState.value == ConnectionState.CONNECTING) {
+                AppLogger.e(TAG, "Timeout waiting for device list — no device found on account?")
+                _lastError.value = "No Anova device found on this account (timed out)."
+                webSocket?.close(1000, "Timeout")
+                webSocket = null
+                _connectionState.value = ConnectionState.DISCONNECTED
+            }
+        }
     }
 
     private val listener = object : WebSocketListener() {
         override fun onOpen(ws: WebSocket, response: Response) {
-            AppLogger.i(TAG, "WebSocket opened")
+            AppLogger.i(TAG, "WebSocket opened — waiting for device list…")
             // Wait for EVENT_APC_WIFI_LIST before marking connected
         }
 
