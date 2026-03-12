@@ -139,6 +139,7 @@ fun MonitorScreen(
     var showTimerEditDialog    by remember { mutableStateOf(false) }
     var showDisconnectConfirm  by remember { mutableStateOf(false) }
     var showPresetsSheet       by remember { mutableStateOf(false) }
+    var showSetDialog          by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var googleSignedInAs       by remember { mutableStateOf<String?>(null) }
     var googleAuthSession      by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -187,6 +188,7 @@ fun MonitorScreen(
 
     val isConnected = state.connectionState == ConnectionState.CONNECTED
     val alertActive = thresholds.minTempEnabled || thresholds.maxTempEnabled
+    val timerFinishEpochMs = state.timerMinutes?.let { System.currentTimeMillis() + it * 60_000L }
 
     Scaffold(
         topBar = {
@@ -280,6 +282,17 @@ fun MonitorScreen(
                 onTimerClick = { if (isConnected) showTimerEditDialog = true }
             )
 
+            // Finishes row
+            if (timerFinishEpochMs != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Finishes ${formatFinishDate(timerFinishEpochMs)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DC_TextDim,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
             Spacer(Modifier.height(6.dp))
 
             // Alert strip
@@ -329,7 +342,7 @@ fun MonitorScreen(
                         status = state.status,
                         onStart = { vm.startCook() },
                         onStop = { vm.stopCook() },
-                        onUpdate = { showTempEditDialog = true }
+                        onUpdate = { showSetDialog = true }
                     )
                     PresetsButton(onClick = { showPresetsSheet = true })
                 }
@@ -413,6 +426,17 @@ fun MonitorScreen(
                 if (email.isNotBlank()) vm.saveCloudSettings(email, password, remoteMs)
             },
             onDismiss = { showConnectionSettings = false }
+        )
+    }
+
+    if (showSetDialog) {
+        SetCookDialog(
+            currentTarget = state.targetTemp,
+            unitSymbol = state.unit.symbol,
+            currentMinutes = state.timerMinutes,
+            onConfirmTemp = { vm.updateTemp(it) },
+            onConfirmTimer = { h, m -> vm.updateTimer(h, m) },
+            onDismiss = { showSetDialog = false }
         )
     }
 
@@ -692,12 +716,25 @@ private fun InfoCell(label: String, value: String, isAccent: Boolean, onClick: (
             fontWeight    = FontWeight.SemiBold,
             color         = DC_TextMuted
         )
-        Spacer(Modifier.height(4.dp))
-        if (onClick != null) {
-            TextButton(
-                onClick = onClick,
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-            ) {
+        // Fixed height keeps all three cells vertically aligned regardless of whether
+        // the value is wrapped in a TextButton (48dp min-touch target) or plain Text.
+        Box(
+            modifier = Modifier.height(40.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (onClick != null) {
+                TextButton(
+                    onClick = onClick,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        value,
+                        fontSize   = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color      = if (isAccent) DC_Orange else DC_TextDim
+                    )
+                }
+            } else {
                 Text(
                     value,
                     fontSize   = 17.sp,
@@ -705,13 +742,6 @@ private fun InfoCell(label: String, value: String, isAccent: Boolean, onClick: (
                     color      = if (isAccent) DC_Orange else DC_TextDim
                 )
             }
-        } else {
-            Text(
-                value,
-                fontSize   = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                color      = if (isAccent) DC_Orange else DC_TextDim
-            )
         }
     }
 }
@@ -855,6 +885,83 @@ private fun ActionButton(connectionState: ConnectionState, onConnect: () -> Unit
     }
 }
 
+// ── Combined Set dialog (temp + timer) ────────────────────────────────────────
+
+@Composable
+private fun SetCookDialog(
+    currentTarget: Float?,
+    unitSymbol: String,
+    currentMinutes: Int?,
+    onConfirmTemp: (Float) -> Unit,
+    onConfirmTimer: (hours: Int, minutes: Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var tempText by remember { mutableStateOf(currentTarget?.let { "%.1f".format(it) } ?: "") }
+    var hours    by remember { mutableStateOf(currentMinutes?.div(60)?.toString() ?: "0") }
+    var minutes  by remember { mutableStateOf(currentMinutes?.rem(60)?.toString() ?: "0") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Set Temperature & Timer") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Temperature section
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Temperature", style = MaterialTheme.typography.labelMedium, color = DC_TextDim)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = tempText,
+                            onValueChange = { tempText = it },
+                            label = { Text("Target (°$unitSymbol)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                tempText.toFloatOrNull()?.let { onConfirmTemp(it); onDismiss() }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = DC_Orange),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Set") }
+                    }
+                }
+
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF2A2A2A)))
+
+                // Timer section
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Timer", style = MaterialTheme.typography.labelMedium, color = DC_TextDim)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = hours, onValueChange = { hours = it },
+                            label = { Text("h") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = minutes, onValueChange = { minutes = it },
+                            label = { Text("min") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                onConfirmTimer(hours.toIntOrNull() ?: 0, minutes.toIntOrNull() ?: 0)
+                                onDismiss()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = DC_Orange),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Set") }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
 // ── Temperature edit dialog ───────────────────────────────────────────────────
 
 @Composable
@@ -939,5 +1046,7 @@ private val ActiveTransport.displayName get() = when (this) {
     ActiveTransport.NONE       -> ""
 }
 
-private val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault())
+private val hhmm       = SimpleDateFormat("HH:mm", Locale.getDefault())
+private val finishFmt  = SimpleDateFormat("EEE d MMM · HH:mm", Locale.getDefault())
 private fun formatHHmm(millis: Long): String = hhmm.format(Date(millis))
+private fun formatFinishDate(millis: Long): String = finishFmt.format(Date(millis))
