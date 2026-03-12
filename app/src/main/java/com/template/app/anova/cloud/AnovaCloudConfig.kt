@@ -18,11 +18,19 @@ object AnovaCloudConfig {
     const val FIREBASE_REFRESH_URL =
         "https://securetoken.googleapis.com/v1/token?key=$FIREBASE_API_KEY"
 
-    const val FIREBASE_CREATE_AUTH_URI_URL =
-        "https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=$FIREBASE_API_KEY"
+    /**
+     * Web client ID registered for the Anova Firebase project (used in Google OAuth URL).
+     * Discovered via the Firebase createAuthUri endpoint.
+     */
+    const val FIREBASE_WEB_CLIENT_ID =
+        "322173998509-vsa6hecaqqp5cjsaja9h3cds1bhgrq3f.apps.googleusercontent.com"
 
     /** Firebase auth handler host — we intercept WebView navigation to this host. */
     const val FIREBASE_AUTH_HANDLER_HOST = "anova-app.firebaseapp.com"
+
+    /** Full Firebase auth handler URL — used as OAuth redirect_uri. */
+    const val FIREBASE_AUTH_HANDLER_URL =
+        "https://anova-app.firebaseapp.com/__/auth/handler"
 
     const val ANOVA_BASE_URL = "https://oven.anovaculinary.com"
 

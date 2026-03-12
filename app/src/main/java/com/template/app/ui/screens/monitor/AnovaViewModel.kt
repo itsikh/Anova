@@ -22,6 +22,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 
+
 @HiltViewModel
 class AnovaViewModel @Inject constructor(
     private val repository: AnovaRepository,
@@ -74,11 +75,10 @@ class AnovaViewModel @Inject constructor(
     }
 
     /**
-     * Calls Firebase createAuthUri to start a browser-based Google OAuth flow.
-     * Returns (authUri, sessionId) to open in a WebView, or null on failure.
+     * Builds the Google OAuth URL for a browser-based sign-in flow.
+     * Returns (authUri, sessionId) to open in a WebView — never fails.
      */
-    suspend fun createGoogleAuthSession(): Pair<String, String>? =
-        withContext(Dispatchers.IO) { firebaseAuth.createGoogleAuthUri() }
+    fun createGoogleAuthSession(): Pair<String, String> = firebaseAuth.createGoogleAuthUri()
 
     /**
      * Exchanges the intercepted Google OAuth redirect URL + sessionId for a Firebase token.

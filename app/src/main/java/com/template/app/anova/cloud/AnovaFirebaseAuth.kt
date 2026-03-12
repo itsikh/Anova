@@ -8,6 +8,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -82,32 +83,31 @@ class AnovaFirebaseAuth @Inject constructor() {
     }
 
     /**
-     * Starts a browser-based Google OAuth flow.
-     * Returns a pair of (authUri, sessionId) to open in a WebView.
-     * The sessionId is needed later to exchange the redirect URL for a Firebase token.
+     * Builds a Google OAuth URL for the Anova Firebase project without calling createAuthUri
+     * (which requires an email address we don't have yet).
+     *
+     * Generates a random sessionId that is embedded as the OAuth `state` parameter.
+     * Firebase's signInWithIdp verifies that the `state` in the redirect URL matches the
+     * sessionId we provide — this serves as a CSRF check.
+     *
+     * Returns (authUri, sessionId). Never fails — URL construction is pure local logic.
      */
-    suspend fun createGoogleAuthUri(): Pair<String, String>? = withContext(Dispatchers.IO) {
-        try {
-            // identifier can be empty for social sign-in; continueUri must be an authorized domain
-            val body = """{"providerId":"google.com","continueUri":"https://anova-app.firebaseapp.com","identifier":""}"""
-            val request = Request.Builder()
-                .url(AnovaCloudConfig.FIREBASE_CREATE_AUTH_URI_URL)
-                .post(body.toRequestBody(JSON_TYPE))
-                .build()
-            val resp = client.newCall(request).execute()
-            val bodyStr = resp.body?.string() ?: ""
-            if (!resp.isSuccessful) {
-                AppLogger.e(TAG, "createAuthUri failed ${resp.code}: ${bodyStr.take(300)}")
-                return@withContext null
-            }
-            AppLogger.d(TAG, "createAuthUri response: ${bodyStr.take(300)}")
-            val parsed = gson.fromJson(bodyStr, CreateAuthUriResponse::class.java)
-            AppLogger.i(TAG, "createAuthUri OK — sessionId=${parsed.sessionId}, authUri starts with ${parsed.authUri.take(60)}")
-            Pair(parsed.authUri, parsed.sessionId)
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "createAuthUri error: ${e.message}")
-            null
-        }
+    fun createGoogleAuthUri(): Pair<String, String> {
+        val sessionId = buildSessionId()
+        val authUri = "https://accounts.google.com/o/oauth2/v2/auth" +
+            "?client_id=${AnovaCloudConfig.FIREBASE_WEB_CLIENT_ID}" +
+            "&response_type=code" +
+            "&scope=openid%20email%20profile" +
+            "&redirect_uri=${AnovaCloudConfig.FIREBASE_AUTH_HANDLER_URL}" +
+            "&state=$sessionId"
+        AppLogger.i(TAG, "Built Google OAuth URL — sessionId=$sessionId")
+        return Pair(authUri, sessionId)
+    }
+
+    private fun buildSessionId(): String {
+        val bytes = ByteArray(16)
+        SecureRandom().nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 
     /**

@@ -102,29 +102,14 @@ fun MonitorScreen(
 
     // Google OAuth via WebView
     var googleAuthSession by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var isLoadingGoogleAuth by remember { mutableStateOf(false) }
+    var isLoadingGoogleAuth by remember { mutableStateOf(false) } // true while exchanging token after redirect
     var googleAuthError by remember { mutableStateOf<String?>(null) }
 
     fun launchGoogleSignIn() {
         showConnectionSettings = false  // dismiss dialog first — avoids stacked Dialog z-order issue
-        isLoadingGoogleAuth = true
         googleAuthError = null
-        coroutineScope.launch {
-            try {
-                val session = vm.createGoogleAuthSession()
-                isLoadingGoogleAuth = false
-                if (session == null) {
-                    googleAuthError = "Could not reach Google authentication server.\nCheck your internet connection and try again."
-                    AppLogger.e("MonitorScreen", "createGoogleAuthUri returned null")
-                    return@launch
-                }
-                googleAuthSession = session
-            } catch (e: Exception) {
-                isLoadingGoogleAuth = false
-                googleAuthError = "Google Sign-In error: ${e.message}"
-                AppLogger.e("MonitorScreen", "Google Sign-In setup error: ${e.message}")
-            }
-        }
+        // URL construction is local/synchronous — no network call needed
+        googleAuthSession = vm.createGoogleAuthSession()
     }
 
     fun onGoogleAuthRedirect(redirectUrl: String, sessionId: String) {
