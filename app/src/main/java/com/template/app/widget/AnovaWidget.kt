@@ -92,10 +92,11 @@ private fun WidgetContent(state: AnovaDeviceState, context: Context) {
             Spacer(GlanceModifier.height(6.dp))
 
             when (state.connectionState) {
-                ConnectionState.CONNECTED -> ConnectedContent(state)
+                ConnectionState.CONNECTED     -> ConnectedContent(state)
                 ConnectionState.CONNECTING,
-                ConnectionState.SCANNING  -> CenteredLabel("Connecting…", ColorGrey)
-                ConnectionState.DISCONNECTED -> CenteredLabel("Disconnected", ColorGrey)
+                ConnectionState.SCANNING,
+                ConnectionState.RECONNECTING  -> CenteredLabel("Connecting…", ColorGrey)
+                ConnectionState.DISCONNECTED  -> CenteredLabel("Disconnected", ColorGrey)
             }
         }
     }
