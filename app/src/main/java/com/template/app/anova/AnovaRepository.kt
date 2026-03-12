@@ -392,7 +392,8 @@ class AnovaRepository @Inject constructor(
             val intent = Intent(context, AnovaMonitorService::class.java)
             context.startForegroundService(intent)
         } catch (e: Exception) {
-            AppLogger.w(TAG, "Could not start foreground service: ${e.message}")
+            // Expected on Android 12+ when app is in background; connection still works without it.
+            AppLogger.d(TAG, "Could not start foreground service: ${e.message}")
         }
     }
 

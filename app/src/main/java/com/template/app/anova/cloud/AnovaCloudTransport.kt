@@ -9,6 +9,7 @@ import com.template.app.anova.TempUnit
 import com.template.app.logging.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -57,6 +58,7 @@ class AnovaCloudTransport @Inject constructor(
     private var webSocket: WebSocket? = null
     private var cookerId: String? = null
     private var cachedRawState: AnovaRawState? = null
+    private var connectionTimeoutJob: Job? = null
 
     // Credentials (email/password path)
     private var email: String? = null
@@ -125,6 +127,8 @@ class AnovaCloudTransport @Inject constructor(
     }
 
     override fun disconnect() {
+        connectionTimeoutJob?.cancel()
+        connectionTimeoutJob = null
         webSocket?.close(1000, "User disconnected")
         webSocket = null
         cookerId = null
@@ -161,13 +165,18 @@ class AnovaCloudTransport @Inject constructor(
     // ── WebSocket ─────────────────────────────────────────────────────────────
 
     private fun openWebSocket(jwt: String) {
+        // Cancel any timeout launched by a previous (failed) connection attempt.
+        // Without this, stale timeout coroutines accumulate during DNS-failure retries
+        // and fire after a later attempt succeeds, killing a good connection.
+        connectionTimeoutJob?.cancel()
+
         val url = "${AnovaCloudConfig.ANOVA_WS_BASE}?token=$jwt&supportedAccessories=APC,APO&platform=android"
         val request = Request.Builder().url(url).build()
         AppLogger.i(TAG, "Opening WebSocket…")
         webSocket = client.newWebSocket(request, listener)
         // If EVENT_APC_WIFI_LIST never arrives, stop waiting after 30s so the
         // UI can show an error instead of being permanently stuck at CONNECTING.
-        scope.launch {
+        connectionTimeoutJob = scope.launch {
             delay(30_000)
             if (_connectionState.value == ConnectionState.CONNECTING) {
                 AppLogger.e(TAG, "Timeout waiting for device list — no device found on account?")
@@ -229,6 +238,8 @@ class AnovaCloudTransport @Inject constructor(
         if (device?.cookerId != null) {
             cookerId = device.cookerId
             _deviceName.value = device.name ?: "Anova Precision Cooker"
+            connectionTimeoutJob?.cancel()
+            connectionTimeoutJob = null
             _connectionState.value = ConnectionState.CONNECTED
             AppLogger.i(TAG, "Connected — cookerId=${device.cookerId} name=${device.name}")
             sendStatusRequest()
