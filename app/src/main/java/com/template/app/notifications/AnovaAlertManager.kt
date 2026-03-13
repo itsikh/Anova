@@ -6,21 +6,40 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import com.template.app.AppConfig
 import com.template.app.MainActivity
 import com.template.app.R
+import com.template.app.anova.AnovaSettings
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class AnovaAlertManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val anovaSettings: AnovaSettings
 ) {
     private val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Cached sound URI from user settings. Updated via a background collector. */
+    private var cachedSoundUri: String? = null
+    private var activeRingtone: Ringtone? = null
+
+    init {
+        scope.launch {
+            anovaSettings.alertSoundUri.collect { uri -> cachedSoundUri = uri }
+        }
+    }
 
     companion object {
         const val NOTIFICATION_ID_COOK_STATUS = 1000
@@ -37,15 +56,27 @@ class AnovaAlertManager @Inject constructor(
         const val ACTION_ADD_HOUR   = "com.template.app.ACTION_ADD_HOUR"
 
         /**
-         * AudioAttributes for alert channels. USAGE_NOTIFICATION_RINGTONE lets the channel
-         * use any custom URI the user picks (USAGE_ALARM causes Samsung and some other OEMs
-         * to override the channel sound with the system alarm regardless of what is set).
-         * DND bypass is handled separately via NotificationChannel.setBypassDnd(true).
+         * AudioAttributes used when playing alert sounds directly via RingtoneManager.
+         * USAGE_ALARM bypasses silent mode and DND on all OEMs. We play sound outside
+         * the notification channel to avoid OEM overrides of channel sounds.
          */
         private val ALARM_AUDIO = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+            .setUsage(AudioAttributes.USAGE_ALARM)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
+    }
+
+    /**
+     * Plays the user's chosen alert sound via RingtoneManager on STREAM_ALARM,
+     * which bypasses silent mode, DND, and mute on all Android OEMs.
+     */
+    private fun playAlertSound() {
+        activeRingtone?.stop()
+        val uri = cachedSoundUri?.let { Uri.parse(it) } ?: Settings.System.DEFAULT_ALARM_ALERT_URI
+        val ringtone = RingtoneManager.getRingtone(context, uri) ?: return
+        ringtone.audioAttributes = ALARM_AUDIO
+        activeRingtone = ringtone
+        ringtone.play()
     }
 
     private fun tapIntent(id: Int): PendingIntent = PendingIntent.getActivity(
@@ -100,6 +131,7 @@ class AnovaAlertManager @Inject constructor(
             .setAutoCancel(true)
             .build()
         nm.notify(notificationId, n)
+        playAlertSound()
     }
 
     // ── Event alerts (cook finished, offline, started — also bypasses DND) ────
@@ -115,6 +147,7 @@ class AnovaAlertManager @Inject constructor(
             .setAutoCancel(true)
             .build()
         nm.notify(notificationId, n)
+        playAlertSound()
     }
 
     fun cancelTempAlerts() {
@@ -125,41 +158,34 @@ class AnovaAlertManager @Inject constructor(
     // ── Channel management ────────────────────────────────────────────────────
 
     /**
-     * Deletes and recreates both alert channels with the given sound URI and vibration setting.
-     * Called when the user changes alert sound or vibration preferences.
-     *
-     * [soundUri] — custom ringtone URI string, or `null` to use the default alarm sound.
-     * [vibrate]  — whether vibration is enabled for alert notifications.
-     *
-     * Note: On Android 8+ notification channels cache their sound. Deleting and recreating
-     * the channel is the only way to programmatically change the sound.
+     * Deletes and recreates both alert channels with the given vibration setting.
+     * Sound is no longer stored in the channel — it's played directly via RingtoneManager
+     * (see [playAlertSound]) so OEM channel-sound overrides cannot interfere.
      */
     fun recreateAlertChannels(soundUri: String?, vibrate: Boolean) {
         nm.deleteNotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALARM)
         nm.deleteNotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALERTS)
-        createAlarmChannel(soundUri, vibrate)
-        createAlertsChannel(soundUri, vibrate)
+        createAlarmChannel(vibrate)
+        createAlertsChannel(vibrate)
     }
 
-    fun createAlarmChannel(soundUri: String?, vibrate: Boolean) {
-        val sound = soundUri?.let { Uri.parse(it) } ?: Settings.System.DEFAULT_ALARM_ALERT_URI
+    fun createAlarmChannel(vibrate: Boolean) {
         nm.createNotificationChannel(
             NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALARM, "Temperature Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Critical temperature threshold alerts — sounds even in Silent, DND, and Mute modes"
                 setBypassDnd(true)
-                setSound(sound, ALARM_AUDIO)
+                setSound(null, null)  // Sound played separately via RingtoneManager on STREAM_ALARM
                 enableVibration(vibrate)
             }
         )
     }
 
-    fun createAlertsChannel(soundUri: String?, vibrate: Boolean) {
-        val sound = soundUri?.let { Uri.parse(it) } ?: Settings.System.DEFAULT_ALARM_ALERT_URI
+    fun createAlertsChannel(vibrate: Boolean) {
         nm.createNotificationChannel(
             NotificationChannel(AppConfig.NOTIFICATION_CHANNEL_ALERTS, "Anova Events", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Cook finished, device offline, cook started — sounds even in Silent, DND, and Mute modes"
                 setBypassDnd(true)
-                setSound(sound, ALARM_AUDIO)
+                setSound(null, null)  // Sound played separately via RingtoneManager on STREAM_ALARM
                 enableVibration(vibrate)
             }
         )
