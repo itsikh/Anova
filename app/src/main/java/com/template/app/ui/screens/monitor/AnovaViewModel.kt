@@ -69,6 +69,13 @@ class AnovaViewModel @Inject constructor(
     val remotePollMs:  StateFlow<Long>    = settings.remotePollMs
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_REMOTE_POLL_MS)
 
+    /** The user's explicit unit preference — used for display; independent of device unit. */
+    val useCelsius: StateFlow<Boolean> = settings.tempUnitCelsius
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    val thresholdAutoPct: StateFlow<Float> = settings.thresholdAutoPct
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_THRESHOLD_AUTO_PCT)
+
     private val _thresholds = MutableStateFlow(ThresholdSettings())
     val thresholds: StateFlow<ThresholdSettings> = _thresholds.asStateFlow()
 
@@ -135,9 +142,10 @@ class AnovaViewModel @Inject constructor(
                 if (target != null && target != lastTarget) {
                     lastTarget = target
                     if (_thresholds.value.isAutoMin) {
+                        val pct = thresholdAutoPct.value
                         _thresholds.value = _thresholds.value.copy(
                             minTempEnabled = true,
-                            minTemp = target * 0.9f
+                            minTemp = target * (1f - pct)
                         )
                     }
                     hasReachedTarget = false

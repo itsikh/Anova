@@ -296,6 +296,11 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_HISTORY_SAMPLE_MS)
     val historyRetentionDays: StateFlow<Int> = anovaSettings.historyRetentionDays
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_HISTORY_RETENTION_DAYS)
+    val thresholdAutoPct: StateFlow<Float> = anovaSettings.thresholdAutoPct
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_THRESHOLD_AUTO_PCT)
+
+    fun setThresholdAutoPct(pct: Float) = viewModelScope.launch { anovaSettings.setThresholdAutoPct(pct) }
+
     val alertCookFinished: StateFlow<Boolean>   = anovaSettings.alertCookFinished.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
     val alertTempTarget: StateFlow<Boolean>     = anovaSettings.alertTempTarget.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
     val alertDeviceOffline: StateFlow<Boolean>  = anovaSettings.alertDeviceOffline.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
