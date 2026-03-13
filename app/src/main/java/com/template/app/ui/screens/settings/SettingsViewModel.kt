@@ -221,11 +221,8 @@ class SettingsViewModel @Inject constructor(
     /**
      * Exports app data to the SAF [uri] chosen by the user via [CreateDocument].
      *
-     * The [uri] works transparently with any storage provider — local filesystem, Google Drive,
+     * Works transparently with any storage provider — local filesystem, Google Drive,
      * Dropbox, USB, etc. — without any extra SDK integration.
-     *
-     * **TODO**: Inject your [backup.BaseBackupManager] subclass and call `backupManager.exportToUri(uri)`.
-     * Replace the placeholder body below with your actual backup logic.
      */
     fun exportBackupToUri(uri: Uri) {
         viewModelScope.launch {
@@ -262,12 +259,7 @@ class SettingsViewModel @Inject constructor(
     private val _restoreState = MutableStateFlow<RestoreState>(RestoreState.Idle)
     val restoreState: StateFlow<RestoreState> = _restoreState
 
-    /**
-     * Restores app data from the backup ZIP at the SAF [uri] chosen by the user via [OpenDocument].
-     *
-     * **TODO**: Inject your [backup.BaseBackupManager] subclass and call `backupManager.importFromUri(uri)`.
-     * Replace the placeholder body below with your actual restore logic.
-     */
+    /** Restores app data from the backup ZIP at the SAF [uri] chosen by the user via [OpenDocument]. */
     fun restoreFromBackup(uri: Uri) {
         viewModelScope.launch {
             _restoreState.value = RestoreState.Restoring

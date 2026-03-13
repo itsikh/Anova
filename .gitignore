@@ -1,6 +1,8 @@
 # Built outputs
 build/
 app/build/
+*.apk
+*.aab
 
 # Gradle
 .gradle/
@@ -8,6 +10,9 @@ gradle/wrapper/gradle-wrapper.jar
 
 # Local machine config — never commit SDK path or signing keys
 local.properties
+keystore.properties
+*.jks
+*.keystore
 
 # Android Studio / IntelliJ
 *.iml
@@ -21,6 +26,9 @@ local.properties
 # OS
 .DS_Store
 Thumbs.db
+
+# Bug-report screenshots (auto-generated, not source assets)
+screenshots/
 
 # Claude Code — commit skills, ignore local memory and settings
 .claude/projects/
