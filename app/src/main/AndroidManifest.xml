@@ -36,6 +36,9 @@
     <!-- Wake lock (keep network alive during cook) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Battery optimization exemption (request to keep service alive during cook) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Vibration for alerts -->
     <uses-permission android:name="android.permission.VIBRATE" />
 

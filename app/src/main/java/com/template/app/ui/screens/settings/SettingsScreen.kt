@@ -271,6 +271,13 @@ fun SettingsScreen(
 
                 Spacer(Modifier.height(16.dp))
 
+                // ── Background & Battery ──────────────────────────────────────
+                SectionHeader("Background & Battery")
+                Spacer(Modifier.height(8.dp))
+                BackgroundRunningCard()
+
+                Spacer(Modifier.height(16.dp))
+
                 // ── GitHub Token ──────────────────────────────────────────────
                 SectionHeader("GitHub Token")
                 Spacer(Modifier.height(8.dp))
@@ -726,7 +733,7 @@ private fun AlertSoundCard(viewModel: SettingsViewModel) {
                     onClick = {
                         ringtoneLauncher.launch(
                             Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE)
+                                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALL)
                                 putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
                                 putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
                                 putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Alert Sound")
@@ -773,5 +780,133 @@ private fun AlertToggleRow(label: String, checked: Boolean, onToggle: (Boolean) 
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onToggle)
+    }
+}
+
+/**
+ * Checklist card guiding the user through OS-level settings required to keep
+ * the app running reliably in the background during an active cook.
+ */
+@Composable
+private fun BackgroundRunningCard() {
+    val context = LocalContext.current
+    val pm = context.getSystemService(android.os.PowerManager::class.java)
+
+    // Re-evaluate each time the card enters composition (e.g. returning from Settings).
+    var batteryExempt by remember { mutableStateOf(pm.isIgnoringBatteryOptimizations(context.packageName)) }
+
+    // Check notification permission
+    val notifGranted = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.POST_NOTIFICATIONS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    } else true
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "For the app to stay active and send alerts while you sleep, complete the checklist below.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            HorizontalDivider()
+
+            // 1. Battery Optimization
+            BackgroundCheckRow(
+                label = "Battery optimization disabled",
+                description = if (batteryExempt) "App is exempt — won't be killed in the background"
+                              else "App may be killed by Android while you sleep",
+                checked = batteryExempt,
+                buttonLabel = if (batteryExempt) null else "Fix",
+                onButtonClick = {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = android.net.Uri.parse("package:${context.packageName}")
+                        }
+                    )
+                    // Re-check after returning (user may have granted or denied)
+                    batteryExempt = pm.isIgnoringBatteryOptimizations(context.packageName)
+                }
+            )
+
+            HorizontalDivider()
+
+            // 2. Notifications
+            BackgroundCheckRow(
+                label = "Notifications allowed",
+                description = if (notifGranted) "Alerts will appear even when the app is in the background"
+                              else "Grant permission so alerts can reach you",
+                checked = notifGranted,
+                buttonLabel = if (notifGranted) null else "Fix",
+                onButtonClick = {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        }
+                    )
+                }
+            )
+
+            HorizontalDivider()
+
+            // 3. Always-on reminder (manual)
+            BackgroundCheckRow(
+                label = "Keep screen / connection alive",
+                description = "On some phones (Xiaomi, Samsung, Huawei) you must also go to:\nSettings → Apps → Anova → Battery → \"No restrictions\" or enable \"Autostart\"",
+                checked = null,
+                buttonLabel = "Open App Settings",
+                onButtonClick = {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = android.net.Uri.parse("package:${context.packageName}")
+                        }
+                    )
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun BackgroundCheckRow(
+    label: String,
+    description: String,
+    checked: Boolean?,           // null = informational only (no icon state)
+    buttonLabel: String?,
+    onButtonClick: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.Top) {
+        Icon(
+            imageVector = when {
+                checked == true  -> Icons.Default.CheckCircle
+                checked == false -> Icons.Default.Warning
+                else             -> Icons.Default.Warning
+            },
+            contentDescription = null,
+            modifier = Modifier.size(20.dp).padding(top = 2.dp),
+            tint = when {
+                checked == true  -> MaterialTheme.colorScheme.primary
+                checked == false -> MaterialTheme.colorScheme.error
+                else             -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (buttonLabel != null) {
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(
+                onClick = onButtonClick,
+                modifier = Modifier.padding(top = 0.dp)
+            ) { Text(buttonLabel, style = MaterialTheme.typography.labelSmall) }
+        }
     }
 }

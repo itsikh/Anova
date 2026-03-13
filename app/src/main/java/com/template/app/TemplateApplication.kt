@@ -8,6 +8,7 @@ import com.template.app.logging.GlobalExceptionHandler
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -45,12 +46,9 @@ class TemplateApplication : Application() {
             }
         )
 
-        // Always delete + recreate alert channels on startup so the sound and vibration
-        // settings always match what's saved in DataStore. Android 8+ ignores setSound()
-        // on an existing channel, so we must delete first to force the update.
-        val (savedSound, savedVibrate) = runBlocking {
-            anovaSettings.alertSoundUri.first() to anovaSettings.alertVibrate.first()
-        }
-        alertManager.recreateAlertChannels(soundUri = savedSound, vibrate = savedVibrate)
+        // Delete + recreate alert channels on startup to apply vibration preference.
+        // Sound is no longer stored in the channel; it's played directly via RingtoneManager.
+        val savedVibrate = runBlocking { anovaSettings.alertVibrate.first() }
+        alertManager.recreateAlertChannels(soundUri = null, vibrate = savedVibrate)
     }
 }

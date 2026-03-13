@@ -20,9 +20,12 @@ import javax.inject.Inject
  * Keeps the app process alive in the background while connected.
  *
  * Notification policy:
- * - RUNNING + connected → foreground with the live cook status notification (no separate "monitoring" banner)
- * - Connected but not running → demoted to background (no persistent notification)
+ * - RUNNING + connected → foreground with the live cook status notification
+ * - Connected but not running → foreground with a minimal "monitoring" banner
  * - Disconnected → service stops itself
+ *
+ * Staying foreground whenever connected (not just when cooking) prevents Android battery
+ * optimization from killing the process mid-cook, especially on aggressive OEMs.
  */
 @AndroidEntryPoint
 class AnovaMonitorService : Service() {
@@ -40,8 +43,6 @@ class AnovaMonitorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Android requires startForeground within 5 s of startForegroundService.
-        // If the device is already cooking we use the cook notification immediately;
-        // otherwise we start foreground with a silent placeholder and remove it at once.
         val state = repository.deviceState.value
         if (state.status == AnovaStatus.RUNNING &&
             state.connectionState == ConnectionState.CONNECTED) {
@@ -49,13 +50,12 @@ class AnovaMonitorService : Service() {
                 AnovaAlertManager.NOTIFICATION_ID_COOK_STATUS,
                 alertManager.buildCookNotification(state.currentTemp, state.targetTemp, state.timerMinutes, state.unit.symbol)
             )
-            isForeground = true
         } else {
-            // Satisfy the 5-second requirement, then immediately remove the notification.
+            // Connected but not cooking — show a minimal monitoring notification.
+            // We stay foreground to prevent battery optimization from killing us mid-cook.
             startForeground(AnovaAlertManager.NOTIFICATION_ID_SERVICE, alertManager.buildServiceNotification())
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            isForeground = false
         }
+        isForeground = true
 
         if (intent?.getBooleanExtra(EXTRA_AUTO_CONNECT, false) == true) {
             repository.connect()
@@ -74,7 +74,7 @@ class AnovaMonitorService : Service() {
 
                 when {
                     cooking -> {
-                        // Promote (or keep) foreground with the live cook notification.
+                        // Show (or update) the live cook notification.
                         startForeground(
                             AnovaAlertManager.NOTIFICATION_ID_COOK_STATUS,
                             alertManager.buildCookNotification(
@@ -88,10 +88,11 @@ class AnovaMonitorService : Service() {
                         // Device went offline — nothing left to monitor.
                         stopSelf()
                     }
-                    isForeground -> {
-                        // Connected but not cooking — demote, no notification needed.
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        isForeground = false
+                    !isForeground -> {
+                        // Connected but not cooking — stay foreground with minimal banner
+                        // to prevent the OS from killing us before a cook starts.
+                        startForeground(AnovaAlertManager.NOTIFICATION_ID_SERVICE, alertManager.buildServiceNotification())
+                        isForeground = true
                     }
                 }
             }
