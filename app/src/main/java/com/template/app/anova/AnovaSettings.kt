@@ -3,6 +3,7 @@ package com.template.app.anova
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -60,6 +61,7 @@ class AnovaSettings @Inject constructor(
         val KEY_THRESHOLD_MIN_AUTO    = booleanPreferencesKey("threshold_min_auto")
         val KEY_THRESHOLD_MAX_ENABLED = booleanPreferencesKey("threshold_max_enabled")
         val KEY_THRESHOLD_MAX_TEMP    = stringPreferencesKey("threshold_max_temp")
+        val KEY_THRESHOLD_AUTO_PCT    = floatPreferencesKey("threshold_auto_pct")
 
         // Defaults
         const val DEFAULT_LOCAL_POLL_MS   = 2_000L
@@ -68,6 +70,7 @@ class AnovaSettings @Inject constructor(
         const val DEFAULT_HISTORY_RETENTION_DAYS = 30
         const val DEFAULT_SCHEDULER_RETRY_MS = 60_000L
         const val DEFAULT_SCHEDULER_MAX_RETRIES = 5
+        const val DEFAULT_THRESHOLD_AUTO_PCT = 0.10f  // 10% below target
     }
 
     val connectionMode: Flow<ConnectionMode> = store.data.map { prefs ->
@@ -134,6 +137,10 @@ class AnovaSettings @Inject constructor(
     val thresholdMinAuto:    Flow<Boolean> = store.data.map { it[KEY_THRESHOLD_MIN_AUTO]   ?: true }
     val thresholdMaxEnabled: Flow<Boolean> = store.data.map { it[KEY_THRESHOLD_MAX_ENABLED] ?: false }
     val thresholdMaxTemp:    Flow<Float>   = store.data.map { it[KEY_THRESHOLD_MAX_TEMP]?.toFloatOrNull() ?: 100f }
+    /** Fraction below the target temp that triggers the auto min alert. Default 0.10 = 10%. */
+    val thresholdAutoPct:    Flow<Float>   = store.data.map { it[KEY_THRESHOLD_AUTO_PCT] ?: DEFAULT_THRESHOLD_AUTO_PCT }
+
+    suspend fun setThresholdAutoPct(pct: Float) = store.edit { it[KEY_THRESHOLD_AUTO_PCT] = pct }
 
     suspend fun saveThresholds(
         minEnabled: Boolean, minTemp: Float, isAutoMin: Boolean,

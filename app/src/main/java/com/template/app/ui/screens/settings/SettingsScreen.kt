@@ -259,6 +259,32 @@ fun SettingsScreen(
                         AlertToggleRow("Device offline",          alertDeviceOffline,  { viewModel.setAlertDeviceOffline(it) })
                         AlertToggleRow("Scheduled command failed",alertScheduleFailed, { viewModel.setAlertScheduleFailed(it) })
                         AlertToggleRow("Cook started remotely",   alertCookStarted,    { viewModel.setAlertCookStarted(it) })
+
+                        HorizontalDivider()
+
+                        // Auto min threshold PCT
+                        val autoPct by viewModel.thresholdAutoPct.collectAsState()
+                        val pctInt = (autoPct * 100).toInt()
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Auto min alert threshold", style = MaterialTheme.typography.bodyMedium)
+                                    Text("$pctInt% below target temp",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Text("$pctInt%",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.primary)
+                            }
+                            androidx.compose.material3.Slider(
+                                value = autoPct,
+                                onValueChange = { viewModel.setThresholdAutoPct(it) },
+                                valueRange = 0.01f..0.30f,
+                                steps = 28,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 }
 

@@ -121,6 +121,7 @@ fun MonitorScreen(
 ) {
     val state          by vm.displayDeviceState.collectAsState()
     val thresholds     by vm.thresholds.collectAsState()
+    val useCelsius     by vm.useCelsius.collectAsState()
     val mode           by vm.connectionMode.collectAsState()
     val active         by vm.activeTransport.collectAsState()
     val localIp        by vm.localWifiIp.collectAsState()
@@ -374,15 +375,17 @@ fun MonitorScreen(
 
     if (showPresetsSheet) {
         PresetsSheet(
-            useCelsius = state.unit.symbol == "C",
+            useCelsius = useCelsius,
             onDismiss = { showPresetsSheet = false }
         )
     }
 
     if (showThresholdDialog) {
+        val autoPct by vm.thresholdAutoPct.collectAsState()
         ThresholdDialog(
             current = thresholds, unitSymbol = state.unit.symbol,
             currentTargetTemp = state.targetTemp,
+            autoPct = autoPct,
             onConfirm = { vm.updateThresholds(it) }, onDismiss = { showThresholdDialog = false }
         )
     }

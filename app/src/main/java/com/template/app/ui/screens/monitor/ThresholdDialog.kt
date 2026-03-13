@@ -29,6 +29,7 @@ fun ThresholdDialog(
     current: ThresholdSettings,
     unitSymbol: String,
     currentTargetTemp: Float?,
+    autoPct: Float,
     onConfirm: (ThresholdSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -57,11 +58,12 @@ fun ThresholdDialog(
                     Switch(checked = minEnabled, onCheckedChange = { minEnabled = it })
                 }
                 if (minEnabled) {
+                    val pctLabel = "%.0f%%".format(autoPct * 100)
                     OutlinedTextField(
                         value = minTemp,
                         onValueChange = { minTemp = it; isAuto = false },
                         label = {
-                            Text(if (isAuto) "Min temp ($unitSymbol) — auto (10% below target)"
+                            Text(if (isAuto) "Min temp ($unitSymbol) — auto ($pctLabel below target)"
                                  else "Min temp ($unitSymbol)")
                         },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -73,12 +75,12 @@ fun ThresholdDialog(
                             onClick = {
                                 isAuto = true
                                 if (currentTargetTemp != null) {
-                                    minTemp = "%.1f".format(currentTargetTemp * 0.9f)
+                                    minTemp = "%.1f".format(currentTargetTemp * (1f - autoPct))
                                 }
                             },
                             modifier = Modifier.padding(top = 0.dp)
                         ) {
-                            Text("↩ Reset to Auto (10% below target)")
+                            Text("↩ Reset to Auto ($pctLabel below target)")
                         }
                     }
                 }
