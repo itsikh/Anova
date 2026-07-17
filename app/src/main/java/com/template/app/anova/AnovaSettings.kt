@@ -51,6 +51,11 @@ class AnovaSettings @Inject constructor(
         val KEY_SCHEDULER_RETRY_MS      = longPreferencesKey("scheduler_retry_ms")
         val KEY_SCHEDULER_MAX_RETRIES   = intPreferencesKey("scheduler_max_retries")
 
+        // Connection reconnect backoff (offline alert suppression)
+        // CSV of minutes to wait before each silent retry. The offline alert only
+        // fires after the sum of these intervals has elapsed with no connection.
+        val KEY_RECONNECT_INTERVALS     = stringPreferencesKey("reconnect_intervals_min")
+
         // Alert sound & vibration
         val KEY_ALERT_SOUND_URI = stringPreferencesKey("alert_sound_uri")
         val KEY_ALERT_VIBRATE   = booleanPreferencesKey("alert_vibrate")
@@ -71,6 +76,16 @@ class AnovaSettings @Inject constructor(
         const val DEFAULT_SCHEDULER_RETRY_MS = 60_000L
         const val DEFAULT_SCHEDULER_MAX_RETRIES = 5
         const val DEFAULT_THRESHOLD_AUTO_PCT = 0.10f  // 10% below target
+        /** Silent-retry backoff before alerting: 1, 3, 6 min → alert after ~10 min total offline. */
+        const val DEFAULT_RECONNECT_INTERVALS = "1,3,6"
+
+        /** Parse a CSV of minutes into a sanitized list of positive ints; falls back to [1,3,6]. */
+        fun parseReconnectIntervals(csv: String?): List<Int> {
+            val parsed = csv.orEmpty().split(",")
+                .mapNotNull { it.trim().toIntOrNull() }
+                .filter { it > 0 }
+            return parsed.ifEmpty { listOf(1, 3, 6) }
+        }
     }
 
     val connectionMode: Flow<ConnectionMode> = store.data.map { prefs ->
@@ -100,6 +115,11 @@ class AnovaSettings @Inject constructor(
     val schedulerRetryMs:    Flow<Long>  = store.data.map { it[KEY_SCHEDULER_RETRY_MS]    ?: DEFAULT_SCHEDULER_RETRY_MS }
     val schedulerMaxRetries: Flow<Int>   = store.data.map { it[KEY_SCHEDULER_MAX_RETRIES] ?: DEFAULT_SCHEDULER_MAX_RETRIES }
 
+    /** Raw CSV of reconnect backoff intervals in minutes (e.g. "1,3,6"). */
+    val reconnectIntervalsCsv: Flow<String>    = store.data.map { it[KEY_RECONNECT_INTERVALS] ?: DEFAULT_RECONNECT_INTERVALS }
+    /** Sanitized reconnect backoff intervals in minutes. The offline alert fires after their sum. */
+    val reconnectIntervalsMin: Flow<List<Int>> = store.data.map { parseReconnectIntervals(it[KEY_RECONNECT_INTERVALS]) }
+
     /** `null` = use the default alarm sound */
     val alertSoundUri: Flow<String?> = store.data.map { it[KEY_ALERT_SOUND_URI] }
     val alertVibrate:  Flow<Boolean> = store.data.map { it[KEY_ALERT_VIBRATE] ?: true }
@@ -126,6 +146,12 @@ class AnovaSettings @Inject constructor(
 
     suspend fun setSchedulerRetryMs(ms: Long)              = store.edit { it[KEY_SCHEDULER_RETRY_MS]    = ms }
     suspend fun setSchedulerMaxRetries(n: Int)             = store.edit { it[KEY_SCHEDULER_MAX_RETRIES] = n }
+
+    /** Persist reconnect backoff intervals from a sanitized list of minutes. */
+    suspend fun setReconnectIntervalsMin(minutes: List<Int>) = store.edit {
+        val clean = minutes.filter { m -> m > 0 }.ifEmpty { listOf(1, 3, 6) }
+        it[KEY_RECONNECT_INTERVALS] = clean.joinToString(",")
+    }
 
     suspend fun setAlertSoundUri(uri: String?) = store.edit {
         if (uri == null) it.remove(KEY_ALERT_SOUND_URI) else it[KEY_ALERT_SOUND_URI] = uri

@@ -2,11 +2,13 @@ package com.template.app.anova.cloud
 
 import com.google.gson.Gson
 import com.template.app.anova.AnovaRawState
+import com.template.app.anova.AnovaSettings
 import com.template.app.anova.AnovaStatus
 import com.template.app.anova.AnovaTransport
 import com.template.app.anova.ConnectionState
 import com.template.app.anova.TempUnit
 import com.template.app.logging.AppLogger
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +39,8 @@ private const val TAG = "AnovaCloud"
 
 @Singleton
 class AnovaCloudTransport @Inject constructor(
-    private val auth: AnovaFirebaseAuth
+    private val auth: AnovaFirebaseAuth,
+    private val settings: AnovaSettings
 ) : AnovaTransport {
 
     // No pingInterval — the Anova server does not respond to WebSocket pings,
@@ -163,16 +166,20 @@ class AnovaCloudTransport @Inject constructor(
     private var reconnectJob: Job? = null
 
     /**
-     * Called on unexpected connection loss. Retries with linear backoff
-     * (5 s, 10 s, 15 s, 20 s, 30 s, 60 s). Sets RECONNECTING so the repository
-     * knows not to fire the offline notification yet. Only after all attempts fail
-     * does it transition to DISCONNECTED, which triggers the offline alert.
+     * Called on unexpected connection loss. Retries silently with a user-configurable
+     * backoff schedule (default 1, 3, 6 min → alert after ~10 min offline). Sets
+     * RECONNECTING so the repository knows not to fire the offline notification yet.
+     * Only after all attempts fail does it transition to DISCONNECTED, which triggers
+     * the offline alert. A brief network drop that reconnects within the window never
+     * reaches DISCONNECTED, so no alert is raised.
      */
     private fun startReconnectBackoff() {
         if (reconnectJob?.isActive == true) return  // already running
         _connectionState.value = ConnectionState.RECONNECTING
         reconnectJob = scope.launch {
-            val backoffMs = listOf(5_000L, 10_000L, 15_000L, 20_000L, 30_000L, 60_000L)
+            val intervalsMin = try { settings.reconnectIntervalsMin.first() } catch (e: Exception) { listOf(1, 3, 6) }
+            val backoffMs = intervalsMin.map { it * 60_000L }
+            AppLogger.i(TAG, "Reconnect backoff schedule (min): ${intervalsMin.joinToString(",")}")
             for ((i, delayMs) in backoffMs.withIndex()) {
                 AppLogger.i(TAG, "Reconnect attempt ${i + 1}/${backoffMs.size} in ${delayMs / 1000}s…")
                 delay(delayMs)
@@ -185,9 +192,9 @@ class AnovaCloudTransport @Inject constructor(
                 }
                 openWebSocket(token)
 
-                // Wait up to 15 s to see if the connection succeeds
+                // Wait up to 20 s to see if the connection succeeds
                 var waited = 0L
-                while (waited < 15_000L && isActive) {
+                while (waited < 20_000L && isActive) {
                     delay(500L); waited += 500L
                     if (_connectionState.value == ConnectionState.CONNECTED) {
                         AppLogger.i(TAG, "Reconnected successfully on attempt ${i + 1}")
@@ -315,8 +322,14 @@ class AnovaCloudTransport @Inject constructor(
 
         override fun onClosed(ws: WebSocket, code: Int, reason: String) {
             AppLogger.i(TAG, "WebSocket closed: $code $reason")
-            if (_connectionState.value != ConnectionState.DISCONNECTED) {
-                _connectionState.value = ConnectionState.DISCONNECTED
+            when (_connectionState.value) {
+                // User-initiated disconnect already set DISCONNECTED — leave it.
+                ConnectionState.DISCONNECTED -> Unit
+                // Connect-time close (no device / timeout) is handled by onClosing.
+                ConnectionState.CONNECTING   -> _connectionState.value = ConnectionState.DISCONNECTED
+                // Unexpected close while connected (or mid-retry) — treat like a drop and
+                // retry silently through the backoff instead of alerting immediately.
+                else -> startReconnectBackoff()
             }
         }
 

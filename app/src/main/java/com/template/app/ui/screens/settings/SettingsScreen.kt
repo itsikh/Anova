@@ -285,6 +285,46 @@ fun SettingsScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
+
+                        HorizontalDivider()
+
+                        // Reconnect backoff / offline alert delay
+                        val reconnectCsv by viewModel.reconnectIntervalsCsv.collectAsState()
+                        var reconnectText by remember(reconnectCsv) { mutableStateOf(reconnectCsv) }
+                        val parsedIntervals = remember(reconnectText) {
+                            reconnectText.split(",").mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 }
+                        }
+                        val totalOfflineMin = parsedIntervals.sum()
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Reconnect before offline alert", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Silently retry after these minutes on a dropped connection. " +
+                                    "Alert only if still offline after all retries.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = reconnectText,
+                                onValueChange = {
+                                    reconnectText = it
+                                    viewModel.setReconnectIntervalsCsv(it)
+                                },
+                                label = { Text("Retry intervals (minutes, comma-separated)") },
+                                placeholder = { Text("1,3,6") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                if (parsedIntervals.isEmpty())
+                                    "Using default 1,3,6 → alert after 10 min offline"
+                                else
+                                    "Alert after ~$totalOfflineMin min offline " +
+                                        "(${parsedIntervals.joinToString(" + ") { "$it" }} min)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
 

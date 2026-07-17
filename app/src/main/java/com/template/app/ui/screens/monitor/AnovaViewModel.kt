@@ -105,31 +105,31 @@ class AnovaViewModel @Inject constructor(
     // True once the device has reached its target temp during the current cook.
     // Min alert only fires after this point — prevents false alerts while heating up.
     private var hasReachedTarget = false
+    // 0 = not currently breaching. >0 = System.currentTimeMillis() when the breach began.
+    // A breach must persist for BREACH_DEBOUNCE_MS before it fires, so a single stray
+    // reading (sensor noise, a stir, a momentary dip) doesn't trigger the alarm.
+    private var minBreachSinceMs = 0L
+    private var maxBreachSinceMs = 0L
 
     /** Alerts currently active (condition still met, not yet acknowledged by user). */
     private val _activeAlerts = MutableStateFlow<List<ActiveAlert>>(emptyList())
     val activeAlerts: StateFlow<List<ActiveAlert>> = _activeAlerts.asStateFlow()
 
     init {
-        // Load persisted thresholds from DataStore
         viewModelScope.launch {
-            val minEnabled = settings.thresholdMinEnabled.first()
-            val minTemp    = settings.thresholdMinTemp.first()
-            val isAutoMin  = settings.thresholdMinAuto.first()
-            val maxEnabled = settings.thresholdMaxEnabled.first()
-            val maxTemp    = settings.thresholdMaxTemp.first()
+            // Load persisted thresholds from DataStore BEFORE observing device state, so the
+            // auto-recompute below never overwrites a saved manual override with defaults.
             _thresholds.value = ThresholdSettings(
-                minTempEnabled = minEnabled,
-                minTemp        = minTemp,
-                isAutoMin      = isAutoMin,
-                maxTempEnabled = maxEnabled,
-                maxTemp        = maxTemp
+                minTempEnabled = settings.thresholdMinEnabled.first(),
+                minTemp        = settings.thresholdMinTemp.first(),
+                isAutoMin      = settings.thresholdMinAuto.first(),
+                maxTempEnabled = settings.thresholdMaxEnabled.first(),
+                maxTemp        = settings.thresholdMaxTemp.first()
             )
-        }
 
-        viewModelScope.launch {
             var lastTarget: Float? = null
             var lastStatus: AnovaStatus? = null
+            var seededTarget = false
             displayDeviceState.collect { state ->
                 // Device confirmed a status change → command was delivered, clear pending flag
                 if (state.status != lastStatus && lastStatus != null) {
@@ -138,21 +138,56 @@ class AnovaViewModel @Inject constructor(
                 lastStatus = state.status
 
                 val target = state.targetTemp
-                // When target temp changes, recalculate auto min (and reset reached flag)
-                if (target != null && target != lastTarget) {
-                    lastTarget = target
-                    if (_thresholds.value.isAutoMin) {
-                        val pct = thresholdAutoPct.value
-                        _thresholds.value = _thresholds.value.copy(
-                            minTempEnabled = true,
-                            minTemp = target * (1f - pct)
-                        )
+                if (target != null) {
+                    val pct = thresholdAutoPct.value
+                    if (!seededTarget) {
+                        // First target observation this session — NOT a user change.
+                        // Refresh the auto value for the current target; leave a manual
+                        // override untouched so it survives app restarts.
+                        seededTarget = true
+                        lastTarget = target
+                        if (_thresholds.value.isAutoMin) applyAutoThreshold(target, pct)
+                    } else if (target != lastTarget) {
+                        // Target actually changed → revert to auto and recompute (per product
+                        // decision: a manual override lasts only until the target changes).
+                        lastTarget = target
+                        applyAutoThreshold(target, pct, revertToAuto = true)
+                        hasReachedTarget = false
+                        lastMinAlertMs = 0L
+                        minBreachSinceMs = 0L
                     }
-                    hasReachedTarget = false
-                    lastMinAlertMs = 0L
                 }
                 checkThresholds(state)
             }
+        }
+    }
+
+    /**
+     * Recompute the auto min threshold as [pct] below [target] and persist it.
+     * Preserves the user's enable/disable choice; when [revertToAuto] is true the
+     * threshold is switched back to auto-tracking mode (used on a target change).
+     */
+    private fun applyAutoThreshold(target: Float, pct: Float, revertToAuto: Boolean = false) {
+        val cur = _thresholds.value
+        val updated = cur.copy(
+            isAutoMin = if (revertToAuto) true else cur.isAutoMin,
+            minTemp   = target * (1f - pct)
+        )
+        if (updated != cur) {
+            _thresholds.value = updated
+            persistThresholds(updated)
+        }
+    }
+
+    private fun persistThresholds(t: ThresholdSettings) {
+        viewModelScope.launch {
+            settings.saveThresholds(
+                minEnabled = t.minTempEnabled,
+                minTemp    = t.minTemp,
+                isAutoMin  = t.isAutoMin,
+                maxEnabled = t.maxTempEnabled,
+                maxTemp    = t.maxTemp
+            )
         }
     }
 
@@ -258,6 +293,8 @@ class AnovaViewModel @Inject constructor(
         lastMaxAlertMs = 0L
         snoozeMinUntilMs = 0L
         snoozeMaxUntilMs = 0L
+        minBreachSinceMs = 0L
+        maxBreachSinceMs = 0L
         alertManager.cancelTempAlerts()
     }
 
@@ -268,6 +305,8 @@ class AnovaViewModel @Inject constructor(
         _activeAlerts.value = emptyList()
         lastMinAlertMs = 0L
         lastMaxAlertMs = 0L
+        minBreachSinceMs = 0L
+        maxBreachSinceMs = 0L
         alertManager.cancelTempAlerts()
     }
 
@@ -275,16 +314,10 @@ class AnovaViewModel @Inject constructor(
         _thresholds.value = t
         lastMinAlertMs = 0L
         lastMaxAlertMs = 0L
+        minBreachSinceMs = 0L
+        maxBreachSinceMs = 0L
         _activeAlerts.value = emptyList()
-        viewModelScope.launch {
-            settings.saveThresholds(
-                minEnabled = t.minTempEnabled,
-                minTemp    = t.minTemp,
-                isAutoMin  = t.isAutoMin,
-                maxEnabled = t.maxTempEnabled,
-                maxTemp    = t.maxTemp
-            )
-        }
+        persistThresholds(t)
     }
 
     private fun checkThresholds(state: AnovaDeviceState) {
@@ -300,12 +333,15 @@ class AnovaViewModel @Inject constructor(
             hasReachedTarget = true
         }
 
-        // Min alert: only fires after device has reached target temp (not during heat-up).
-        // Re-fires every ALERT_REPEAT_MS while condition remains active (unless snoozed).
-        val minActive = t.minTempEnabled && hasReachedTarget && temp <= t.minTemp
-        if (minActive) {
+        // Min alert: only fires after device has reached target temp (not during heat-up),
+        // AND only once the breach has persisted for BREACH_DEBOUNCE_MS — a single stray
+        // reading won't trigger it. Re-fires every ALERT_REPEAT_MS while active (unless snoozed).
+        val minCrossed = t.minTempEnabled && hasReachedTarget && temp <= t.minTemp
+        if (minCrossed) {
+            if (minBreachSinceMs == 0L) minBreachSinceMs = now
+            val sustained = (now - minBreachSinceMs) >= BREACH_DEBOUNCE_MS
             val snoozed = now < snoozeMinUntilMs
-            if (!snoozed && (lastMinAlertMs == 0L || (now - lastMinAlertMs) >= ALERT_REPEAT_MS)) {
+            if (sustained && !snoozed && (lastMinAlertMs == 0L || (now - lastMinAlertMs) >= ALERT_REPEAT_MS)) {
                 lastMinAlertMs = now
                 val msg = "Temp ${fmt(temp)}${state.unit.symbol} — below min ${fmt(t.minTemp)}${state.unit.symbol}"
                 alertManager.postTempAlert(msg, AnovaAlertManager.NOTIFICATION_ID_TEMP_MIN)
@@ -313,6 +349,7 @@ class AnovaViewModel @Inject constructor(
                 _activeAlerts.value = others + ActiveAlert(msg, AlertType.MIN)
             }
         } else {
+            minBreachSinceMs = 0L
             snoozeMinUntilMs = 0L
             lastMinAlertMs = 0L
             if (_activeAlerts.value.any { it.type == AlertType.MIN }) {
@@ -320,10 +357,12 @@ class AnovaViewModel @Inject constructor(
             }
         }
 
-        val maxActive = t.maxTempEnabled && temp >= t.maxTemp
-        if (maxActive) {
+        val maxCrossed = t.maxTempEnabled && temp >= t.maxTemp
+        if (maxCrossed) {
+            if (maxBreachSinceMs == 0L) maxBreachSinceMs = now
+            val sustained = (now - maxBreachSinceMs) >= BREACH_DEBOUNCE_MS
             val snoozed = now < snoozeMaxUntilMs
-            if (!snoozed && (lastMaxAlertMs == 0L || (now - lastMaxAlertMs) >= ALERT_REPEAT_MS)) {
+            if (sustained && !snoozed && (lastMaxAlertMs == 0L || (now - lastMaxAlertMs) >= ALERT_REPEAT_MS)) {
                 lastMaxAlertMs = now
                 val msg = "Temp ${fmt(temp)}${state.unit.symbol} — above max ${fmt(t.maxTemp)}${state.unit.symbol}"
                 alertManager.postTempAlert(msg, AnovaAlertManager.NOTIFICATION_ID_TEMP_MAX)
@@ -331,6 +370,7 @@ class AnovaViewModel @Inject constructor(
                 _activeAlerts.value = others + ActiveAlert(msg, AlertType.MAX)
             }
         } else {
+            maxBreachSinceMs = 0L
             snoozeMaxUntilMs = 0L
             lastMaxAlertMs = 0L
             if (_activeAlerts.value.any { it.type == AlertType.MAX }) {
@@ -342,6 +382,9 @@ class AnovaViewModel @Inject constructor(
     companion object {
         private const val ALERT_REPEAT_MS = 2 * 60 * 1_000L
         private const val SNOOZE_MS       = 5 * 60 * 1_000L
+        // A threshold breach must persist this long before it fires, filtering out
+        // transient single-reading spikes/dips (sensor noise, stirring, brief drops).
+        private const val BREACH_DEBOUNCE_MS = 45 * 1_000L
     }
 
     private fun fmt(t: Float) = "%.1f".format(t)

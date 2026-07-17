@@ -207,6 +207,9 @@ class AnovaRepository @Inject constructor(
             transport.connectionState.collect { state ->
                 if (_activeTransport.value != type) return@collect
                 AppLogger.d(TAG, "$type → $state")
+                // Capture the prior connection state BEFORE overwriting it — the DISCONNECTED
+                // branch needs to know whether we arrived here from RECONNECTING.
+                val prevConnectionState = _deviceState.value.connectionState
                 _deviceState.update { it.copy(connectionState = state) }
                 when (state) {
                     ConnectionState.CONNECTED    -> { _deviceState.update { it.copy(connectionError = null) }; purgeOldHistory(); startPolling() }
@@ -219,15 +222,15 @@ class AnovaRepository @Inject constructor(
                     }
                     ConnectionState.DISCONNECTED -> {
                         stopPolling()
-                        // Fire offline notification if we were running OR if we just finished
-                        // exhausting reconnect retries (came from RECONNECTING state).
-                        val prevState = _deviceState.value
-                        val shouldNotify = prevState.status == AnovaStatus.RUNNING
-                            || prevState.connectionState == ConnectionState.RECONNECTING
+                        // Only fire the offline alert when we reached DISCONNECTED after the
+                        // silent-retry window was exhausted (i.e. we came from RECONNECTING).
+                        // A user-initiated disconnect or a connect-time failure goes
+                        // CONNECTED/CONNECTING → DISCONNECTED and must stay silent.
+                        val shouldNotify = prevConnectionState == ConnectionState.RECONNECTING
                         _deviceState.update { it.copy(currentTemp = null, targetTemp = null, timerMinutes = null, status = AnovaStatus.UNKNOWN) }
                         alertManager.cancelCookNotification()
                         if (shouldNotify) checkAlert(settings.alertDeviceOffline) {
-                            alertManager.postEventAlert("Anova offline", "Lost connection to your device.", AnovaAlertManager.NOTIFICATION_ID_OFFLINE)
+                            alertManager.postEventAlert("Anova offline", "Lost connection to your device after multiple retries.", AnovaAlertManager.NOTIFICATION_ID_OFFLINE)
                         }
                     }
                     else -> Unit
@@ -325,8 +328,10 @@ class AnovaRepository @Inject constructor(
             alertManager.cancelCookNotification()
         }
 
-        // Cook started remotely: was not running, now running
-        if (prev.status != AnovaStatus.RUNNING && raw.status == AnovaStatus.RUNNING && prevStatus != AnovaStatus.UNKNOWN) {
+        // Cook started remotely: a genuine idle → running transition. We require the last
+        // *observed device* status to be STOPPED (not UNKNOWN/RUNNING) so this does not fire
+        // on the first reading or when a still-running cook reappears after a reconnect.
+        if (prev.status != AnovaStatus.RUNNING && raw.status == AnovaStatus.RUNNING && prevStatus == AnovaStatus.STOPPED) {
             checkAlert(settings.alertCookStarted) {
                 alertManager.postEventAlert("Cook started", "Your Anova device started a cook.", AnovaAlertManager.NOTIFICATION_ID_COOK_START)
             }

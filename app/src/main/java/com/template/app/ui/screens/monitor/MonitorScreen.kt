@@ -274,12 +274,16 @@ fun MonitorScreen(
 
             Spacer(Modifier.height(6.dp))
 
-            // Alert strip
-            if (thresholds.minTempEnabled && thresholds.minTemp > 0f) {
+            // Alert strip — always shown while connected so there is always a way back
+            // into the threshold editor (even after the alert has been disabled).
+            if (isConnected) {
                 AlertStrip(
+                    minEnabled = thresholds.minTempEnabled && thresholds.minTemp > 0f,
                     minTemp = thresholds.minTemp,
-                    unit = state.unit.symbol,
                     isAuto = thresholds.isAutoMin,
+                    maxEnabled = thresholds.maxTempEnabled,
+                    maxTemp = thresholds.maxTemp,
+                    unit = state.unit.symbol,
                     onClick = { showThresholdDialog = true }
                 )
                 Spacer(Modifier.height(8.dp))
@@ -780,7 +784,28 @@ private fun ActiveAlertDialog(
 // ── Alert strip ───────────────────────────────────────────────────────────────
 
 @Composable
-private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean, onClick: () -> Unit) {
+private fun AlertStrip(
+    minEnabled: Boolean,
+    minTemp: Float,
+    isAuto: Boolean,
+    maxEnabled: Boolean,
+    maxTemp: Float,
+    unit: String,
+    onClick: () -> Unit
+) {
+    val anyEnabled = minEnabled || maxEnabled
+    val label = when {
+        minEnabled && maxEnabled ->
+            "Alert below %.1f%s%s  ·  above %.1f%s".format(minTemp, unit, if (isAuto) " (auto)" else "", maxTemp, unit)
+        minEnabled ->
+            "Alert below %.1f%s%s".format(minTemp, unit, if (isAuto) " (auto)" else "")
+        maxEnabled ->
+            "Alert above %.1f%s".format(maxTemp, unit)
+        else ->
+            "Temperature alert off — tap to set"
+    }
+    // Muted styling when no alert is active so the row still reads as a tappable entry point.
+    val contentColor = if (anyEnabled) DC_Orange else DC_TextMuted
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -792,15 +817,15 @@ private fun AlertStrip(minTemp: Float, unit: String, isAuto: Boolean, onClick: (
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(Icons.Default.NotificationsActive, null, tint = DC_Orange, modifier = Modifier.size(16.dp))
+        Icon(Icons.Default.NotificationsActive, null, tint = contentColor, modifier = Modifier.size(16.dp))
         Text(
-            "Alert below %.1f%s%s".format(minTemp, unit, if (isAuto) " (auto)" else ""),
+            label,
             style      = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
-            color      = DC_Orange,
+            color      = contentColor,
             modifier   = Modifier.weight(1f)
         )
-        Icon(Icons.Default.Settings, null, tint = DC_Orange.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+        Icon(Icons.Default.Settings, null, tint = contentColor.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
     }
 }
 

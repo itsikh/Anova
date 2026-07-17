@@ -293,6 +293,14 @@ class SettingsViewModel @Inject constructor(
 
     fun setThresholdAutoPct(pct: Float) = viewModelScope.launch { anovaSettings.setThresholdAutoPct(pct) }
 
+    /** Reconnect backoff intervals (minutes) as CSV, e.g. "1,3,6". Offline alert fires after their sum. */
+    val reconnectIntervalsCsv: StateFlow<String> = anovaSettings.reconnectIntervalsCsv
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AnovaSettings.DEFAULT_RECONNECT_INTERVALS)
+
+    fun setReconnectIntervalsCsv(csv: String) = viewModelScope.launch {
+        anovaSettings.setReconnectIntervalsMin(AnovaSettings.parseReconnectIntervals(csv))
+    }
+
     val alertCookFinished: StateFlow<Boolean>   = anovaSettings.alertCookFinished.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
     val alertTempTarget: StateFlow<Boolean>     = anovaSettings.alertTempTarget.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
     val alertDeviceOffline: StateFlow<Boolean>  = anovaSettings.alertDeviceOffline.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
