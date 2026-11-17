@@ -2,7 +2,7 @@
 # One-command Android release.
 #
 # Usage: scripts/release.sh [<version>] [--notes file] [--dry-run] [--force-tests]
-#                           [--allow-branch name]
+#                           [--allow-branch name] [--first-release]
 #
 # <version> is the new versionName (semver without a leading v). If omitted,
 # the last component of the current versionName is incremented by 1.
@@ -66,7 +66,7 @@ source "$CONF"
 : "${EXTRA_ASSETS_CMD:=}" # optional: writes extra release assets (e.g. latest.json) into $ASSET_DIR
 
 usage() {
-  sed -n '2,28p' "$0" >&2
+  sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d' >&2
   exit 2
 }
 
@@ -181,6 +181,8 @@ fi
 SECRET_RE='(\.(jks|keystore|p12|pfx|pem|bak)$)|(^|/)keystore\.properties$|(^|/)local\.properties$|(^|/)oauth\.json$|(^|/)\.keys/|play[^/]*key[^/]*\.json$|(^|/)\.env$'
 tracked_secrets=$(git ls-files | grep -E "$SECRET_RE" || true)
 inline_pw=$(git grep -nIE '(store|key)Password[[:space:]]*(=|\()[[:space:]]*"[^"$]+"' -- '*.gradle' '*.gradle.kts' 2>/dev/null || true)
+# The public Android debug keystore password ("android") is not a secret.
+inline_pw=$(grep -vE 'Password[[:space:]]*(=|\()[[:space:]]*"android"' <<<"$inline_pw" || true)
 [[ -n "$inline_pw" ]] && tracked_secrets="${tracked_secrets:+$tracked_secrets
 }${inline_pw}"
 if [[ -n "$tracked_secrets" ]]; then
@@ -625,7 +627,11 @@ recover() {
       echo "  Nothing was committed. The version bump was reverted." >&2
       [[ -n "$del_draft" ]] && echo "  Delete any draft left behind: ${del_draft}" >&2 ;;
     "committing")
-      echo "  Nothing was pushed. If HEAD is the 'Release ${TAG}' commit: git tag -d ${TAG} 2>/dev/null; git reset --hard HEAD~1" >&2
+      if [[ "$(git log -1 --format=%s 2>/dev/null)" == "Release ${TAG} (build ${NEW_CODE})" ]]; then
+        echo "  Nothing was pushed. Undo the release commit: git tag -d ${TAG} 2>/dev/null; git reset --hard HEAD~1" >&2
+      else
+        echo "  The commit did not happen. Undo the staged bump: git reset -q -- ${VERSION_FILE} && git checkout -- ${VERSION_FILE}" >&2
+      fi
       [[ -n "$del_draft" ]] && echo "  Then delete the draft: ${del_draft}" >&2 ;;
     "pushing")
       echo "  Pushed so far: ${PUSHED:-none}." >&2
