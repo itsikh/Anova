@@ -63,6 +63,7 @@ source "$CONF"
 : "${MAPPING_FILE:=}"
 : "${PLAY_ARTIFACTS:=}"   # files PLAY_CMD uploads; deleted before and checked after the build
 : "${CERT_SHA256:=}"      # optional pinned SHA-256 of the primary APK signing cert
+: "${EXTRA_ASSETS_CMD:=}" # optional: writes extra release assets (e.g. latest.json) into $ASSET_DIR
 
 usage() {
   sed -n '2,28p' "$0" >&2
@@ -179,6 +180,9 @@ fi
 # --- secrets must never be tracked ---
 SECRET_RE='(\.(jks|keystore|p12|pfx|pem|bak)$)|(^|/)keystore\.properties$|(^|/)local\.properties$|(^|/)oauth\.json$|(^|/)\.keys/|play[^/]*key[^/]*\.json$|(^|/)\.env$'
 tracked_secrets=$(git ls-files | grep -E "$SECRET_RE" || true)
+inline_pw=$(git grep -nIE '(store|key)Password[[:space:]]*(=|\()[[:space:]]*"[^"$]+"' -- '*.gradle' '*.gradle.kts' 2>/dev/null || true)
+[[ -n "$inline_pw" ]] && tracked_secrets="${tracked_secrets:+$tracked_secrets
+}${inline_pw}"
 if [[ -n "$tracked_secrets" ]]; then
   echo "SECRETS ARE TRACKED IN GIT:" >&2
   echo "$tracked_secrets" | sed 's/^/  /' >&2
@@ -440,7 +444,9 @@ primary_apk=""
 for spec in $APK_PATHS; do primary_apk=$(artifact_path "$spec"); break; done
 if [[ -n "$primary_apk" ]]; then
   [[ -n "$AAPT2" ]] || { echo "refuse: aapt2 not found under $ANDROID_HOME/build-tools" >&2; exit 1; }
-  built_code=$("$AAPT2" dump badging "$primary_apk" 2>/dev/null | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+  badging=$("$AAPT2" dump badging "$primary_apk" 2>&1) || true
+  built_code=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$badging" | head -1)
+  [[ -n "$built_code" ]] || { echo "refuse: could not read versionCode from ${primary_apk} (aapt2: $(head -2 <<<"$badging"))" >&2; exit 1; }
   if [[ "$built_code" != "$NEW_CODE" ]]; then
     echo "refuse: ${primary_apk} has versionCode '${built_code}', expected ${NEW_CODE}" >&2
     exit 1
@@ -458,7 +464,7 @@ cert_of_apk() {
     | tr -d ' :'
 }
 cert_fail() {
-  if [[ "$FIRST_RELEASE" -eq 1 ]]; then
+  if [[ "$FIRST_RELEASE" -eq 1 && -z "$PREV_TAG" ]]; then
     echo "warn: $* (allowed by --first-release)" >&2
     return 0
   fi
@@ -473,7 +479,10 @@ if [[ "$HAS_GH" -eq 1 ]]; then
     --json tagName --jq '.[0].tagName // empty')
   if [[ -n "$PREV_TAG" ]]; then
     PREV_DIR=$(mktemp -d)
-    gh release download "$PREV_TAG" --repo "$GH_RELEASE_REPO" --pattern '*.apk' --dir "$PREV_DIR" >/dev/null 2>&1 || true
+    if ! gh release download "$PREV_TAG" --repo "$GH_RELEASE_REPO" --pattern '*.apk' --dir "$PREV_DIR" >/dev/null; then
+      echo "refuse: could not download the APKs of previous release ${PREV_TAG} for the signing check" >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -523,7 +532,12 @@ for spec in $APK_PATHS; do
     if [[ "$first" -eq 1 ]]; then
       cert_fail "no previous release APK named ${name} and no CERT_SHA256 pin; cannot verify the signing key" || cert_rc=1
     else
-      echo "warn: ${name} has no previous release asset to compare with" >&2
+      if [[ -n "$PREV_TAG" ]]; then
+        echo "refuse: ${PREV_TAG} has no asset matching ${name}; cannot verify its signing key" >&2
+        cert_rc=1
+      else
+        echo "warn: ${name} has no previous release asset to compare with" >&2
+      fi
     fi
   fi
   first=0
@@ -531,11 +545,48 @@ done
 [[ -n "$PREV_DIR" ]] && rm -rf "$PREV_DIR"
 [[ "$cert_rc" -eq 0 ]] || exit 1
 
+# --- release assets (built in dry-run too, so the hook is exercised) ---
+asset_dir=$(mktemp -d)
+assets=()
+for spec in $APK_PATHS $AAB_PATHS; do
+  p=$(artifact_path "$spec")
+  dest="$asset_dir/$(artifact_name "$spec")"
+  cp "$p" "$dest"
+  assets+=("$dest")
+done
+if [[ -n "$MAPPING_FILE" && -f "$MAPPING_FILE" ]]; then
+  map_name="mapping-${TAG}.txt.gz"
+  gzip -9 -c "$MAPPING_FILE" >"$asset_dir/$map_name"
+  assets+=("$asset_dir/$map_name")
+fi
+if [[ -n "$EXTRA_ASSETS_CMD" ]]; then
+  extra_dir=$(mktemp -d)
+  echo "Extra assets: ${EXTRA_ASSETS_CMD}"
+  ASSET_DIR="$extra_dir" VERSION="$VERSION" NEW_CODE="$NEW_CODE" TAG="$TAG" \
+    GH_RELEASE_REPO="$GH_RELEASE_REPO" NOTES="$NOTES" bash -c "$EXTRA_ASSETS_CMD"
+  shopt -s nullglob
+  extra=("$extra_dir"/*)
+  shopt -u nullglob
+  [[ ${#extra[@]} -gt 0 ]] || { echo "refuse: EXTRA_ASSETS_CMD wrote no files" >&2; exit 1; }
+  for f in "${extra[@]}"; do
+    if [[ "$f" == *.json ]] && ! python3 -m json.tool "$f" >/dev/null; then
+      echo "refuse: extra asset $(basename "$f") is not valid JSON" >&2; exit 1
+    fi
+    echo "  $(basename "$f"): $(head -c 400 "$f" | tr '\n' ' ')"
+    mv "$f" "$asset_dir/"
+    assets+=("$asset_dir/$(basename "$f")")
+  done
+  rmdir "$extra_dir"
+fi
+
 echo
 echo "Would release ${APP_NAME} ${TAG} (code ${NEW_CODE}) to:"
 echo "  code remotes: ${CODE_REMOTES}"
-[[ -n "$GH_RELEASE_REPO" && "$GH_RELEASE_REPO" != "owner/repo" ]] && echo "  GitHub release: ${GH_RELEASE_REPO}"
-[[ -n "$PLAY_CMD" ]] && echo "  Play: ${PLAY_CMD}"
+if [[ "$HAS_GH" -eq 1 ]]; then
+  echo "  GitHub release: ${GH_RELEASE_REPO}"
+  for f in "${assets[@]}"; do echo "    asset: $(basename "$f")"; done
+fi
+if [[ -n "$PLAY_CMD" ]]; then echo "  Play: ${PLAY_CMD}"; fi
 if [[ "$NEVER_PUSH_CODE_TO_GITHUB" -eq 1 ]]; then
   echo "  (code is never pushed to GitHub)"
 fi
@@ -543,6 +594,7 @@ fi
 if [[ "$DRY" -eq 1 ]]; then
   echo
   echo "Dry run complete. Version bump will be reverted. Artifacts left in app/build/."
+  rm -rf "$asset_dir"
   exit 0
 fi
 
@@ -550,64 +602,72 @@ fi
 # Order: draft GitHub release → commit + tag → atomic push to each remote →
 # publish the draft → prune → Play. A failure prints the recovery steps.
 STAGE="before commit"
+PUSHED=""
 recover() {
   local rc=$?
-  [[ $rc -eq 0 ]] && return
+  [[ $rc -eq 0 || "$STAGE" == "done" ]] && return 0
+  local del_draft="" publish="" push_cmd
+  if [[ "$HAS_GH" -eq 1 ]]; then
+    del_draft="gh release delete ${TAG} --repo ${GH_RELEASE_REPO} --yes"
+    publish="gh release edit ${TAG} --repo ${GH_RELEASE_REPO} --draft=false"
+  fi
+  if [[ "$PUSH_TAGS_TO_CODE_REMOTES" -eq 1 ]]; then
+    push_cmd="git push --atomic <remote> ${MAIN_BRANCH} ${TAG}"
+  else
+    push_cmd="git push <remote> ${MAIN_BRANCH}"
+  fi
   echo >&2
   echo "RELEASE ${TAG} FAILED at stage: ${STAGE} (exit ${rc})" >&2
   case "$STAGE" in
-    "before commit") echo "  Nothing was committed or pushed. The version bump was reverted." >&2 ;;
-    "draft created")
-      echo "  Nothing was committed. Delete the draft: gh release delete ${TAG} --repo ${GH_RELEASE_REPO} --yes" >&2 ;;
-    "committed"|"pushing")
+    "before commit")
+      echo "  Nothing was committed or pushed. The version bump was reverted." >&2 ;;
+    "creating draft"|"draft created")
+      echo "  Nothing was committed. The version bump was reverted." >&2
+      [[ -n "$del_draft" ]] && echo "  Delete any draft left behind: ${del_draft}" >&2 ;;
+    "committing")
+      echo "  Nothing was pushed. If HEAD is the 'Release ${TAG}' commit: git tag -d ${TAG} 2>/dev/null; git reset --hard HEAD~1" >&2
+      [[ -n "$del_draft" ]] && echo "  Then delete the draft: ${del_draft}" >&2 ;;
+    "pushing")
       echo "  Pushed so far: ${PUSHED:-none}." >&2
-      echo "  If nothing was pushed: git tag -d ${TAG}; git reset --hard HEAD~1; and delete the draft release." >&2
-      echo "  Otherwise push the rest by hand: git push --atomic <remote> ${MAIN_BRANCH} ${TAG}, then: gh release edit ${TAG} --repo ${GH_RELEASE_REPO} --draft=false" >&2 ;;
+      if [[ -z "$PUSHED" ]]; then
+        echo "  Nothing was pushed: git tag -d ${TAG}; git reset --hard HEAD~1" >&2
+        [[ -n "$del_draft" ]] && echo "  and delete the draft: ${del_draft}" >&2
+      else
+        echo "  Push the rest by hand: ${push_cmd}" >&2
+        [[ -n "$publish" ]] && echo "  then publish: ${publish}" >&2
+      fi ;;
     "pushed")
-      echo "  Code and tag are pushed to every remote. Publish the draft: gh release edit ${TAG} --repo ${GH_RELEASE_REPO} --draft=false" >&2 ;;
+      echo "  Code is pushed to every remote." >&2
+      [[ -n "$publish" ]] && echo "  Publish the draft: ${publish}" >&2 ;;
     "published")
-      echo "  The release is out. Only the later step failed (prune or Play); rerun it by hand: ${PLAY_CMD:-prune}" >&2 ;;
+      echo "  The release is out. Only a later step failed (prune or Play); rerun it by hand${PLAY_CMD:+: ${PLAY_CMD}}." >&2 ;;
   esac
 }
-trap 'recover; revert_bump_if_uncommitted' EXIT
 revert_bump_if_uncommitted() {
-  case "$STAGE" in "before commit"|"draft created") revert_bump ;; esac
+  case "$STAGE" in "before commit"|"creating draft"|"draft created") revert_bump ;; esac
 }
+trap 'recover; revert_bump_if_uncommitted' EXIT
 
 if [[ "$HAS_GH" -eq 1 ]]; then
   notes_args=(--title "${APP_NAME} ${TAG}" --notes "Build ${NEW_CODE}")
   if [[ -n "$NOTES" ]]; then
     notes_args=(--title "${APP_NAME} ${TAG}" --notes-file "$NOTES")
   fi
-  # Do not pass --verify-tag when the tag lives on a different git host
-  # than the GitHub releases repo (calc-vault, cash, mychef, trivia, SOSBlocker).
-  asset_dir=$(mktemp -d)
-  assets=()
-  for spec in $APK_PATHS $AAB_PATHS; do
-    p=$(artifact_path "$spec")
-    [[ -f "$p" ]] || continue
-    dest="$asset_dir/$(artifact_name "$spec")"
-    cp "$p" "$dest"
-    assets+=("$dest")
-  done
-  if [[ -n "$MAPPING_FILE" && -f "$MAPPING_FILE" ]]; then
-    map_name="mapping-${TAG}.txt.gz"
-    gzip -9 -c "$MAPPING_FILE" >"$asset_dir/$map_name"
-    assets+=("$asset_dir/$map_name")
-  fi
-  # Upload APKs first (in APK_PATHS order) so a repo whose updater grabs
-  # "the first .apk asset" still gets the main app, not a helper.
+  # No --verify-tag: the tag may live on a different git host than the
+  # releases repo (calc-vault, cash, mychef, trivia, SOSBlocker).
+  # APKs are uploaded first (APK_PATHS order) so an updater that grabs
+  # "the first .apk asset" gets the main app, not a helper.
+  STAGE="creating draft"
   gh release create "$TAG" --repo "$GH_RELEASE_REPO" --draft "${notes_args[@]}" "${assets[@]}"
   STAGE="draft created"
 fi
 
+STAGE="committing"
 git add -- "$VERSION_FILE"
 git commit -m "Release ${TAG} (build ${NEW_CODE})"
 # Always tag locally; PUSH_TAGS_TO_CODE_REMOTES only controls pushing it.
 git tag -a "$TAG" -m "Release ${TAG} (build ${NEW_CODE})"
-STAGE="committed"
 
-PUSHED=""
 STAGE="pushing"
 for remote in $CODE_REMOTES; do
   echo "Pushing ${MAIN_BRANCH} to ${remote}…"
@@ -644,12 +704,15 @@ if [[ -n "$PLAY_CMD" ]]; then
   eval "$PLAY_CMD"
 fi
 STAGE="done"
+rm -rf "$asset_dir"
 
 echo
 echo "Released ${APP_NAME} ${TAG} (build ${NEW_CODE})"
 for spec in $APK_PATHS $AAB_PATHS; do
   p=$(artifact_path "$spec")
-  [[ -f "$p" ]] && echo "  $p  ($(artifact_name "$spec"))  $(wc -c <"$p") bytes"
+  if [[ -f "$p" ]]; then echo "  $p  ($(artifact_name "$spec"))  $(wc -c <"$p") bytes"; fi
 done
-[[ -n "$GH_RELEASE_REPO" && "$GH_RELEASE_REPO" != "owner/repo" ]] && \
+if [[ "$HAS_GH" -eq 1 ]]; then
   echo "  https://github.com/${GH_RELEASE_REPO}/releases/tag/${TAG}"
+fi
+exit 0
