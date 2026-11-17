@@ -23,8 +23,15 @@
 # GitHub release, and Play upload. Version bumps are reverted at the end so
 # the tree stays clean; the artifacts are left in app/build/ for inspection.
 #
-# --allow-branch is only for testing the script on a feature branch. Real
-# releases (and a normal dry-run) must be on the app's main branch.
+# --allow-branch is only for testing the script on a feature branch, and only
+# together with --dry-run. Real releases must be on the app's main branch.
+#
+# --first-release allows a build whose signing certificate cannot be compared
+# with a previous release (no previous release and no CERT_SHA256 pin).
+#
+# Real releases are staged: the GitHub release is created as a draft, the
+# commit and tag are pushed atomically to each code remote, and only then is
+# the draft published. On a failure the script prints how to recover.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -53,6 +60,9 @@ source "$CONF"
 : "${NEVER_PUSH_CODE_TO_GITHUB:=0}"
 : "${PRUNE_OLD_RELEASES:=0}"
 : "${PRUNE_KEEP:=5}"
+: "${MAPPING_FILE:=}"
+: "${PLAY_ARTIFACTS:=}"   # files PLAY_CMD uploads; deleted before and checked after the build
+: "${CERT_SHA256:=}"      # optional pinned SHA-256 of the primary APK signing cert
 
 usage() {
   sed -n '2,28p' "$0" >&2
@@ -63,11 +73,13 @@ VERSION=""
 NOTES=""
 DRY=0
 FORCE_TESTS=0
+FIRST_RELEASE=0
 ALLOW_BRANCH=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY=1; shift ;;
     --force-tests) FORCE_TESTS=1; shift ;;
+    --first-release) FIRST_RELEASE=1; shift ;;
     --allow-branch)
       shift
       [[ $# -gt 0 && "$1" != --* ]] || { echo "usage: --allow-branch must be followed by a branch name" >&2; exit 2; }
@@ -101,6 +113,19 @@ fi
 if [[ -z "$NOTES" && "$DRY" -eq 0 ]]; then
   echo "a real release requires --notes <file>" >&2
   exit 2
+fi
+if [[ -n "$ALLOW_BRANCH" && "$DRY" -eq 0 ]]; then
+  echo "refuse: --allow-branch requires --dry-run" >&2
+  exit 2
+fi
+
+# One release.sh run per worktree at a time (a dry-run's revert must never
+# undo a real release's bump).
+LOCK="$(git rev-parse --git-dir)/release.lock"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "refuse: another release.sh is running in this worktree ($LOCK)" >&2
+  exit 1
 fi
 
 export ANDROID_HOME="${ANDROID_HOME:-/home/itsik/Android/Sdk}"
@@ -149,6 +174,30 @@ if [[ -n "$(git status --porcelain)" ]]; then
   echo "refuse: worktree is dirty" >&2
   git status --porcelain >&2
   exit 1
+fi
+
+# --- secrets must never be tracked ---
+SECRET_RE='(\.(jks|keystore|p12|pfx|pem|bak)$)|(^|/)keystore\.properties$|(^|/)local\.properties$|(^|/)oauth\.json$|(^|/)\.keys/|play[^/]*key[^/]*\.json$|(^|/)\.env$'
+tracked_secrets=$(git ls-files | grep -E "$SECRET_RE" || true)
+if [[ -n "$tracked_secrets" ]]; then
+  echo "SECRETS ARE TRACKED IN GIT:" >&2
+  echo "$tracked_secrets" | sed 's/^/  /' >&2
+  if [[ "$DRY" -eq 0 ]]; then
+    echo "refuse: untrack and purge these (and rotate any key that was pushed) before releasing" >&2
+    exit 1
+  fi
+  echo "warn: a real release would refuse here" >&2
+fi
+
+# --- never push code to GitHub when the app says so ---
+if [[ "$NEVER_PUSH_CODE_TO_GITHUB" -eq 1 ]]; then
+  for remote in $CODE_REMOTES; do
+    urls=$(git remote get-url --push --all "$remote" 2>/dev/null || true)
+    if [[ -z "$urls" ]] || grep -qi 'github\.com' <<<"$urls"; then
+      echo "refuse: NEVER_PUSH_CODE_TO_GITHUB=1 but code remote '${remote}' pushes to: ${urls:-<missing>}" >&2
+      exit 1
+    fi
+  done
 fi
 
 if [[ -z "$ALLOW_BRANCH" ]]; then
@@ -242,17 +291,45 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   echo "refuse: tag ${TAG} already exists locally" >&2
   exit 1
 fi
+HAS_GH=0
+[[ -n "$GH_RELEASE_REPO" && "$GH_RELEASE_REPO" != "owner/repo" ]] && HAS_GH=1
 for remote in $CODE_REMOTES; do
-  if git ls-remote --exit-code --tags "$remote" "refs/tags/${TAG}" >/dev/null 2>&1; then
+  set +e
+  git ls-remote --exit-code --tags "$remote" "refs/tags/${TAG}" >/dev/null 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]]; then
     echo "refuse: tag ${TAG} already exists on ${remote}" >&2
+    exit 1
+  elif [[ $rc -ne 2 ]]; then
+    echo "refuse: cannot reach code remote ${remote} (git ls-remote exit ${rc})" >&2
     exit 1
   fi
 done
-if [[ -n "$GH_RELEASE_REPO" && "$GH_RELEASE_REPO" != "owner/repo" ]]; then
-  if gh release view "$TAG" --repo "$GH_RELEASE_REPO" >/dev/null 2>&1; then
-    echo "refuse: GitHub release ${TAG} already exists on ${GH_RELEASE_REPO}" >&2
+if [[ "$HAS_GH" -eq 1 ]]; then
+  if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+    echo "refuse: gh is missing or not logged in; cannot check or publish ${GH_RELEASE_REPO}" >&2
     exit 1
   fi
+  set +e
+  ghout=$(gh release view "$TAG" --repo "$GH_RELEASE_REPO" --json tagName 2>&1)
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]]; then
+    echo "refuse: GitHub release ${TAG} already exists on ${GH_RELEASE_REPO}" >&2
+    exit 1
+  elif ! grep -qi 'not found' <<<"$ghout"; then
+    echo "refuse: cannot check GitHub release ${TAG} on ${GH_RELEASE_REPO}: ${ghout}" >&2
+    exit 1
+  fi
+fi
+if [[ "$DRY" -eq 0 ]]; then
+  for remote in $CODE_REMOTES; do
+    if ! git push --dry-run "$remote" "$MAIN_BRANCH" >/dev/null 2>&1; then
+      echo "refuse: git push --dry-run ${remote} ${MAIN_BRANCH} failed (auth, network, or non-fast-forward)" >&2
+      exit 1
+    fi
+  done
 fi
 
 bump_versions() {
@@ -278,18 +355,16 @@ print(f"bumped {path}: versionCode={new_code} versionName={new_name}")
 PY
 }
 
+# Revert the bump on every exit before the release commit (dry-run or a
+# failed real release), including Ctrl-C and kill, so a rerun starts clean.
+revert_bump() {
+  git checkout -- "$VERSION_FILE" 2>/dev/null || true
+}
+trap revert_bump EXIT
+trap 'exit 130' INT TERM HUP
+
 echo "Current ${current_name} (code ${current_code}) → ${VERSION} (code ${NEW_CODE})"
 bump_versions "$VERSION" "$NEW_CODE"
-
-# Revert the bump on any later failure during a dry-run, and at the end of
-# a successful dry-run. Real releases keep the bump so a failed build can
-# be retried at the same version (matching existing release skills).
-revert_bump() {
-  git checkout -- "$VERSION_FILE"
-}
-if [[ "$DRY" -eq 1 ]]; then
-  trap revert_bump EXIT
-fi
 
 # --- tests ---
 MARKER_DIR="$ROOT/build"
@@ -297,7 +372,7 @@ MARKER="$MARKER_DIR/release-test-pass"
 tree_hash() {
   # Tracked files only, including unstaged edits (the version bump).
   # Never hashes untracked files, so a local keystore cannot enter the marker.
-  (git rev-parse HEAD; git diff HEAD -- "$VERSION_FILE") | sha256sum | awk '{print $1}'
+  (git rev-parse HEAD; git diff HEAD -- "$VERSION_FILE"; echo "tasks $GRADLE_TEST_TASKS") | sha256sum | awk '{print $1}'
 }
 TREE_HASH=$(tree_hash)
 
@@ -330,6 +405,11 @@ else
 fi
 
 # --- build ---
+# Delete old outputs first so a stale signed APK/AAB from an earlier build can
+# never be published under the new version.
+for spec in $APK_PATHS $AAB_PATHS; do rm -f "$(artifact_path "$spec")"; done
+for f in $PLAY_ARTIFACTS; do rm -f "$f"; done
+[[ -n "$MAPPING_FILE" ]] && rm -f "$MAPPING_FILE"
 echo "Building: ${GRADLE_BUILD_TASKS}"
 # shellcheck disable=SC2086
 run_gradle $GRADLE_BUILD_TASKS
@@ -344,82 +424,112 @@ for spec in $APK_PATHS $AAB_PATHS; do
     echo "  $(ls -lh "$p")  →  $(artifact_name "$spec")"
   fi
 done
+for f in $PLAY_ARTIFACTS; do
+  [[ -f "$f" ]] || { echo "missing Play artifact: $f" >&2; missing=1; }
+done
 if [[ "$missing" -ne 0 ]]; then
   exit 1
 fi
 
-# --- signing certificate ---
-sha1_of_apk() {
-  local apk=$1
-  if [[ -z "$APKSIGNER" ]]; then
-    echo "apksigner not found under $ANDROID_HOME/build-tools" >&2
-    return 1
+AAPT2=""
+for a in "$ANDROID_HOME"/build-tools/*/aapt2; do
+  [[ -x "$a" ]] && AAPT2="$a"
+done
+# The primary APK must carry the new versionCode.
+primary_apk=""
+for spec in $APK_PATHS; do primary_apk=$(artifact_path "$spec"); break; done
+if [[ -n "$primary_apk" ]]; then
+  [[ -n "$AAPT2" ]] || { echo "refuse: aapt2 not found under $ANDROID_HOME/build-tools" >&2; exit 1; }
+  built_code=$("$AAPT2" dump badging "$primary_apk" 2>/dev/null | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+  if [[ "$built_code" != "$NEW_CODE" ]]; then
+    echo "refuse: ${primary_apk} has versionCode '${built_code}', expected ${NEW_CODE}" >&2
+    exit 1
   fi
-  # "Signer #1 certificate SHA-1 digest: ab:cd:..."
+  echo "Built APK versionCode ${built_code}"
+fi
+
+# --- signing certificate ---
+# SHA-256 of the signing certificate, lowercase hex without separators.
+cert_of_apk() {
+  local apk=$1
+  [[ -n "$APKSIGNER" ]] || { echo "apksigner not found under $ANDROID_HOME/build-tools" >&2; return 1; }
   "$APKSIGNER" verify --print-certs "$apk" 2>/dev/null \
-    | awk -F': ' 'tolower($0) ~ /sha-1 digest/ {print tolower($2); exit}' \
+    | awk -F': ' 'tolower($0) ~ /certificate sha-256 digest/ {print tolower($2); exit}' \
     | tr -d ' :'
 }
-
-verify_cert() {
-  local built=$1
-  if [[ ! -f "$built" ]]; then
+cert_fail() {
+  if [[ "$FIRST_RELEASE" -eq 1 ]]; then
+    echo "warn: $* (allowed by --first-release)" >&2
     return 0
   fi
-  local built_sha prev_sha tmp tag apk_name
-  built_sha=$(sha1_of_apk "$built")
-  if [[ -z "$built_sha" ]]; then
-    echo "refuse: could not read SHA-1 from $built (unsigned?)" >&2
-    return 1
-  fi
-  echo "Built APK SHA-1: ${built_sha}"
-  if [[ -z "$GH_RELEASE_REPO" || "$GH_RELEASE_REPO" == "owner/repo" ]]; then
-    echo "No GitHub releases repo configured; skipped previous-release cert check."
-    return 0
-  fi
-  if ! command -v gh >/dev/null 2>&1; then
-    echo "warn: gh not on PATH; skipped previous-release cert check." >&2
-    return 0
-  fi
-  tag=$(gh release list --repo "$GH_RELEASE_REPO" --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)
-  if [[ -z "$tag" || "$tag" == "null" ]]; then
-    echo "No previous GitHub release on ${GH_RELEASE_REPO}; skipped cert check."
-    return 0
-  fi
-  apk_name=$(gh release view "$tag" --repo "$GH_RELEASE_REPO" --json assets --jq '[.assets[].name | select(test("(?i)\\.apk$"))][0]' 2>/dev/null || true)
-  if [[ -z "$apk_name" || "$apk_name" == "null" ]]; then
-    echo "Previous release ${tag} has no APK asset; skipped cert check."
-    return 0
-  fi
-  tmp=$(mktemp -d)
-  # shellcheck disable=SC2064
-  trap "rm -rf '$tmp'" RETURN
-  if ! gh release download "$tag" --repo "$GH_RELEASE_REPO" --pattern "$apk_name" --dir "$tmp" >/dev/null; then
-    echo "warn: could not download ${apk_name} from ${tag}; skipped cert check." >&2
-    return 0
-  fi
-  prev_sha=$(sha1_of_apk "$tmp/$apk_name")
-  if [[ -z "$prev_sha" ]]; then
-    echo "warn: could not read SHA-1 from previous APK ${apk_name}; skipped cert check." >&2
-    return 0
-  fi
-  echo "Previous ${tag} SHA-1: ${prev_sha}"
-  if [[ "$built_sha" != "$prev_sha" ]]; then
-    echo "refuse: signing certificate SHA-1 does not match previous release ${tag}" >&2
-    echo "  built:    ${built_sha}" >&2
-    echo "  previous: ${prev_sha}" >&2
-    return 1
-  fi
-  echo "Signing certificate matches ${tag}."
+  echo "refuse: $* (pass --first-release only if this really is the first signed release)" >&2
+  return 1
 }
 
-# Check the first APK (the primary artifact). Additional APKs (e.g. smshelper)
-# are listed in APK_PATHS and verified to exist, but are not always signed
-# with the same history; we still verify each one that exists.
+PREV_TAG=""
+PREV_DIR=""
+if [[ "$HAS_GH" -eq 1 ]]; then
+  PREV_TAG=$(gh release list --repo "$GH_RELEASE_REPO" --limit 20 --exclude-drafts --exclude-pre-releases \
+    --json tagName --jq '.[0].tagName // empty')
+  if [[ -n "$PREV_TAG" ]]; then
+    PREV_DIR=$(mktemp -d)
+    gh release download "$PREV_TAG" --repo "$GH_RELEASE_REPO" --pattern '*.apk' --dir "$PREV_DIR" >/dev/null 2>&1 || true
+  fi
+fi
+
+# Every APK is checked. The primary APK (first in APK_PATHS) must match
+# CERT_SHA256 when pinned, and the APK of the same asset name in the previous
+# release; a check that cannot be made stops the release.
+cert_rc=0
+first=1
 for spec in $APK_PATHS; do
-  verify_cert "$(artifact_path "$spec")"
-  break
+  p=$(artifact_path "$spec"); name=$(artifact_name "$spec")
+  built=$(cert_of_apk "$p" || true)
+  if [[ -z "$built" ]]; then
+    echo "refuse: could not read the signing certificate of $p (unsigned?)" >&2
+    cert_rc=1; first=0; continue
+  fi
+  echo "Built ${name} cert SHA-256: ${built}"
+  checked=0
+  if [[ "$first" -eq 1 && -n "$CERT_SHA256" ]]; then
+    pin=$(tr -d ' :' <<<"$CERT_SHA256" | tr 'A-F' 'a-f')
+    if [[ "$built" != "$pin" ]]; then
+      echo "refuse: ${name} certificate does not match CERT_SHA256 in release.conf" >&2
+      cert_rc=1
+    fi
+    checked=1
+  fi
+  prev_file=""
+  if [[ -n "$PREV_DIR" ]]; then
+    # Match the previous asset by name; a {version} in the asset name matches
+    # any version (e.g. MyApp-{version}.apk).
+    pat=$(basename "$p")
+    [[ "$spec" == *"="* ]] && { pat=${spec#*=}; pat=${pat//\{version\}/*}; }
+    for f in "$PREV_DIR"/$pat; do [[ -f "$f" ]] && { prev_file=$f; break; }; done
+  fi
+  if [[ -n "$prev_file" ]]; then
+    prev=$(cert_of_apk "$prev_file" || true)
+    if [[ -z "$prev" ]]; then
+      cert_fail "could not read the certificate of ${name} from ${PREV_TAG}" || cert_rc=1
+    elif [[ "$built" != "$prev" ]]; then
+      echo "refuse: ${name} certificate does not match ${PREV_TAG} (previous ${prev})" >&2
+      cert_rc=1
+    else
+      echo "  matches ${PREV_TAG}"
+    fi
+    checked=1
+  fi
+  if [[ "$checked" -eq 0 ]]; then
+    if [[ "$first" -eq 1 ]]; then
+      cert_fail "no previous release APK named ${name} and no CERT_SHA256 pin; cannot verify the signing key" || cert_rc=1
+    else
+      echo "warn: ${name} has no previous release asset to compare with" >&2
+    fi
+  fi
+  first=0
 done
+[[ -n "$PREV_DIR" ]] && rm -rf "$PREV_DIR"
+[[ "$cert_rc" -eq 0 ]] || exit 1
 
 echo
 echo "Would release ${APP_NAME} ${TAG} (code ${NEW_CODE}) to:"
@@ -437,22 +547,34 @@ if [[ "$DRY" -eq 1 ]]; then
 fi
 
 # --- commit, tag, push, publish ---
-git add -- "$VERSION_FILE"
-git commit -m "Release ${TAG} (build ${NEW_CODE})"
+# Order: draft GitHub release → commit + tag → atomic push to each remote →
+# publish the draft → prune → Play. A failure prints the recovery steps.
+STAGE="before commit"
+recover() {
+  local rc=$?
+  [[ $rc -eq 0 ]] && return
+  echo >&2
+  echo "RELEASE ${TAG} FAILED at stage: ${STAGE} (exit ${rc})" >&2
+  case "$STAGE" in
+    "before commit") echo "  Nothing was committed or pushed. The version bump was reverted." >&2 ;;
+    "draft created")
+      echo "  Nothing was committed. Delete the draft: gh release delete ${TAG} --repo ${GH_RELEASE_REPO} --yes" >&2 ;;
+    "committed"|"pushing")
+      echo "  Pushed so far: ${PUSHED:-none}." >&2
+      echo "  If nothing was pushed: git tag -d ${TAG}; git reset --hard HEAD~1; and delete the draft release." >&2
+      echo "  Otherwise push the rest by hand: git push --atomic <remote> ${MAIN_BRANCH} ${TAG}, then: gh release edit ${TAG} --repo ${GH_RELEASE_REPO} --draft=false" >&2 ;;
+    "pushed")
+      echo "  Code and tag are pushed to every remote. Publish the draft: gh release edit ${TAG} --repo ${GH_RELEASE_REPO} --draft=false" >&2 ;;
+    "published")
+      echo "  The release is out. Only the later step failed (prune or Play); rerun it by hand: ${PLAY_CMD:-prune}" >&2 ;;
+  esac
+}
+trap 'recover; revert_bump_if_uncommitted' EXIT
+revert_bump_if_uncommitted() {
+  case "$STAGE" in "before commit"|"draft created") revert_bump ;; esac
+}
 
-if [[ "$PUSH_TAGS_TO_CODE_REMOTES" -eq 1 ]]; then
-  git tag -a "$TAG" -m "Release ${TAG} (build ${NEW_CODE})"
-fi
-
-for remote in $CODE_REMOTES; do
-  echo "Pushing ${MAIN_BRANCH} to ${remote}…"
-  git push "$remote" "$MAIN_BRANCH"
-  if [[ "$PUSH_TAGS_TO_CODE_REMOTES" -eq 1 ]]; then
-    git push "$remote" "$TAG"
-  fi
-done
-
-if [[ -n "$GH_RELEASE_REPO" && "$GH_RELEASE_REPO" != "owner/repo" ]]; then
+if [[ "$HAS_GH" -eq 1 ]]; then
   notes_args=(--title "${APP_NAME} ${TAG}" --notes "Build ${NEW_CODE}")
   if [[ -n "$NOTES" ]]; then
     notes_args=(--title "${APP_NAME} ${TAG}" --notes-file "$NOTES")
@@ -468,20 +590,51 @@ if [[ -n "$GH_RELEASE_REPO" && "$GH_RELEASE_REPO" != "owner/repo" ]]; then
     cp "$p" "$dest"
     assets+=("$dest")
   done
-  if [[ -n "${MAPPING_FILE:-}" && -f "$MAPPING_FILE" ]]; then
-    map_name="mapping-v${VERSION}.txt.gz"
+  if [[ -n "$MAPPING_FILE" && -f "$MAPPING_FILE" ]]; then
+    map_name="mapping-${TAG}.txt.gz"
     gzip -9 -c "$MAPPING_FILE" >"$asset_dir/$map_name"
     assets+=("$asset_dir/$map_name")
   fi
   # Upload APKs first (in APK_PATHS order) so a repo whose updater grabs
   # "the first .apk asset" still gets the main app, not a helper.
-  gh release create "$TAG" --repo "$GH_RELEASE_REPO" "${notes_args[@]}" "${assets[@]}"
-  if [[ "$PRUNE_OLD_RELEASES" -eq 1 ]]; then
-    echo "Pruning GitHub releases on ${GH_RELEASE_REPO}, keeping ${PRUNE_KEEP}…"
-    gh release list --repo "$GH_RELEASE_REPO" --limit 100 --json tagName --jq '.[].tagName' \
-      | tail -n +"$((PRUNE_KEEP + 1))" \
-      | xargs -r -I{} gh release delete {} --repo "$GH_RELEASE_REPO" --yes --cleanup-tag \
-      || echo "warn: prune skipped or failed (safe to run later by hand)"
+  gh release create "$TAG" --repo "$GH_RELEASE_REPO" --draft "${notes_args[@]}" "${assets[@]}"
+  STAGE="draft created"
+fi
+
+git add -- "$VERSION_FILE"
+git commit -m "Release ${TAG} (build ${NEW_CODE})"
+# Always tag locally; PUSH_TAGS_TO_CODE_REMOTES only controls pushing it.
+git tag -a "$TAG" -m "Release ${TAG} (build ${NEW_CODE})"
+STAGE="committed"
+
+PUSHED=""
+STAGE="pushing"
+for remote in $CODE_REMOTES; do
+  echo "Pushing ${MAIN_BRANCH} to ${remote}…"
+  if [[ "$PUSH_TAGS_TO_CODE_REMOTES" -eq 1 ]]; then
+    git push --atomic "$remote" "$MAIN_BRANCH" "$TAG"
+  else
+    git push "$remote" "$MAIN_BRANCH"
+  fi
+  PUSHED="${PUSHED:+$PUSHED }$remote"
+done
+STAGE="pushed"
+
+if [[ "$HAS_GH" -eq 1 ]]; then
+  gh release edit "$TAG" --repo "$GH_RELEASE_REPO" --draft=false
+fi
+STAGE="published"
+
+if [[ "$HAS_GH" -eq 1 && "$PRUNE_OLD_RELEASES" -eq 1 ]]; then
+  echo "Pruning GitHub releases on ${GH_RELEASE_REPO}, keeping ${PRUNE_KEEP}…"
+  tags=$(gh release list --repo "$GH_RELEASE_REPO" --limit 100 --exclude-drafts --exclude-pre-releases \
+    --json tagName --jq '.[].tagName' || true)
+  if [[ "$(head -1 <<<"$tags")" != "$TAG" ]]; then
+    echo "warn: newest release is not ${TAG}; prune skipped (run it by hand later)" >&2
+  else
+    tail -n +"$((PRUNE_KEEP + 1))" <<<"$tags" \
+      | xargs -r -I{} gh release delete {} --repo "$GH_RELEASE_REPO" --yes \
+      || echo "warn: prune failed part-way (safe to run later by hand)" >&2
   fi
 fi
 
@@ -490,6 +643,7 @@ if [[ -n "$PLAY_CMD" ]]; then
   # shellcheck disable=SC2086
   eval "$PLAY_CMD"
 fi
+STAGE="done"
 
 echo
 echo "Released ${APP_NAME} ${TAG} (build ${NEW_CODE})"

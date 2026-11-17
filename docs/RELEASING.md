@@ -3,7 +3,7 @@
 One-command release (run from the repo root, on `main`, with a clean worktree):
 
 ```sh
-scripts/release.sh                 # auto-increment the patch version
+scripts/release.sh --notes notes.md   # auto-increment the patch version
 scripts/release.sh 1.2.3 --notes notes.md
 scripts/release.sh --dry-run       # build and verify, do not commit/tag/push/publish
 scripts/release.sh --force-tests   # ignore the pass marker and re-run tests
@@ -42,12 +42,22 @@ Heap, worker count, and the Kotlin daemon are **not** hard-coded in this repo.
 and available RAM, and a systemd oneshot re-runs it at boot so a VM resize
 (4 cores → 8 cores, or a memory change) is picked up automatically.
 
-Do not add `org.gradle.jvmargs`, `org.gradle.workers.max`, or
-`kotlin.daemon.jvmargs` to this project's `gradle.properties` — they would
-override the tuner. Parallel builds, the build cache, and Kotlin incremental
+`~/.gradle/gradle.properties` (the tuner) takes precedence over the project
+`gradle.properties`, so the project keeps only a modest `org.gradle.jvmargs`
+fallback for machines without the tuner. Only `-D` flags or `GRADLE_OPTS` beat the tuner. Parallel builds, the build cache, and Kotlin incremental
 compilation stay enabled here because they are safe on every machine.
 
 ## Secrets
 
 Never commit keystores, `keystore.properties`, `local.properties`, Play keys,
 tokens, or `*.bak`. Signing files stay on the machine (or are gitignored).
+
+## If a release fails
+
+The script stages a release: draft GitHub release → commit and tag → atomic
+push to each code remote → publish the draft → prune → Play. On a failure it
+prints the stage it reached and the exact commands to finish or undo it.
+Before the commit nothing is changed (the version bump is reverted).
+A previous-release signing check that cannot be made stops the release;
+pass `--first-release` only for an app's very first signed release, or pin
+`CERT_SHA256` in release.conf. Tracked keystores or other secrets stop a real release.
